@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "module": "ESNext",
+    "skipLibCheck": false,
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["client/src/*"],
+      "@db": ["server/db.ts"],
+      "@db/schema": ["drizzle/schema.ts"],
+      "@shared/*": ["shared/*"]
+    },
+    "typeRoots": ["./node_modules/@types", "./server/types/modules"],
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo"
+  },
+  "include": ["client/src", "server", "drizzle", "shared"],
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.spec.ts", "dist"]
+}

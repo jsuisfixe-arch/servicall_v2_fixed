@@ -1,0 +1,69 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1771168409018,
+      "tag": "0000_freezing_quicksilver",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1771254000000,
+      "tag": "0001_add_business_configuration",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771255200000,
+      "tag": "0002_add_pos_config_and_vat",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771263360000,
+      "tag": "0003_add_recruitment_module",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771300000000,
+      "tag": "0004_fix_simulated_calls",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771350000000,
+      "tag": "0005_add_recruitment_enhancements",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771400000000,
+      "tag": "0010_lead_extractions",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771410000000,
+      "tag": "0011_rename_public_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771420000000,
+      "tag": "0012_byok_workflows_table",
+      "breakpoints": true
+    }
+  ]
+}
