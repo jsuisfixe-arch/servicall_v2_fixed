@@ -43,9 +43,23 @@ export type WorkflowExecution = typeof workflowExecutions.$inferSelect;
 export type InsertWorkflowExecution = typeof workflowExecutions.$inferInsert;
 
 // ============================================
+// REVOKED_TOKENS TABLE
+// ============================================
+export const revokedTokens = pgTable("revoked_tokens", {
+  jti: varchar("jti", { length: 255 }).primaryKey(),
+  exp: timestamp("exp").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type RevokedToken = typeof revokedTokens.$inferSelect;
+export type InsertRevokedToken = typeof revokedTokens.$inferInsert;
+
+// ============================================
 // ENUMS
 // ============================================
 export const roleEnum = pgEnum("role", ["owner", "superadmin", "admin", "manager", "agent", "agentIA", "user"]);
+
+export const token_typeEnum = pgEnum("token_type", ["session", "refresh", "reset_password"]);
 export const statusEnum = pgEnum("status", ["new", "contacted", "qualified", "converted", "lost"]);
 export const call_typeEnum = pgEnum("call_type", ["inbound", "outbound"]);
 export const outcomeEnum = pgEnum("outcome", ["success", "no_answer", "voicemail", "busy", "failed"]);

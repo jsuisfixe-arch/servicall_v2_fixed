@@ -33,31 +33,12 @@ export const appointmentReminderRouter = router({
       const { appointments } = await import("../../drizzle/schema");
       const { eq } = await import("drizzle-orm");
 
-      const appointmentResults = await db
-        .select()
-        .from(appointments)
-        .where(eq(appointments.id, appointmentId))
-        .limit(1);
+      const appointment = await db.getAppointmentById(appointmentId, ctx.tenantId);
 
-      if (appointmentResults.length === 0) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Appointment not found",
-        });
-      }
-
-      const appointment = appointmentResults[0] ?? undefined;
       if (!appointment) {
         throw new TRPCError({
           code: "NOT_FOUND",
-          message: "Appointment not found after initial check",
-        });
-      }
-
-      if (appointment.tenantId !== ctx.tenantId) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You don't have access to this appointment",
+          message: "Appointment not found or you don't have access to it",
         });
       }
 
@@ -101,31 +82,12 @@ export const appointmentReminderRouter = router({
         const { appointments } = await import("../../drizzle/schema");
         const { eq } = await import("drizzle-orm");
 
-        const appointmentResults = await db
-          .select()
-          .from(appointments)
-          .where(eq(appointments.id, appointmentId))
-          .limit(1);
+        const appointment = await db.getAppointmentById(appointmentId, ctx.tenantId);
 
-        if (appointmentResults.length === 0) {
+        if (!appointment) {
           throw new TRPCError({
             code: "NOT_FOUND",
-            message: "Rendez-vous non trouvé",
-          });
-        }
-
-        const appointment = appointmentResults[0] ?? undefined;
-      if (!appointment) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "Appointment not found after initial check",
-        });
-      }
-
-        if (appointment.tenantId !== ctx.tenantId) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Vous n'avez pas accès à ce rendez-vous",
+            message: "Rendez-vous non trouvé ou vous n'avez pas accès à celui-ci",
           });
         }
 

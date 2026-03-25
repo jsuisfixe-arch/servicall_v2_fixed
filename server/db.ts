@@ -267,7 +267,7 @@ export async function getTenantMembers(tenantId: number): Promise<Array<{
   role: string | null;
   isActive: boolean | null;
 }>> {
-  if (process.env['DB_ENABLED'] === "false") return [{ id: 1, name: "Admin Demo", email: "admin@servicall.com", role: "owner", isActive: true }];
+  if (process.env["DB_ENABLED"] === "false") return [{ id: 1, name: "Admin Demo", email: "admin@servicall.com", role: "owner", isActive: true }];
   const database = getDbInstance();
   return await database
     .select({
@@ -280,6 +280,30 @@ export async function getTenantMembers(tenantId: number): Promise<Array<{
     .from(schema.tenantUsers)
     .innerJoin(schema.users, eq(schema.tenantUsers.userId, schema.users.id))
     .where(eq(schema.tenantUsers.tenantId, tenantId));
+}
+
+export async function getTenantMemberById(userId: number, tenantId: number): Promise<{
+  id: number;
+  name: string | null;
+  email: string;
+  role: string | null;
+  isActive: boolean | null;
+} | undefined> {
+  if (process.env["DB_ENABLED"] === "false") return { id: userId, name: "Demo User", email: "demo@servicall.com", role: "agent", isActive: true };
+  const database = getDbInstance();
+  const result = await database
+    .select({
+      id: schema.users.id,
+      name: schema.users.name,
+      email: schema.users.email,
+      role: schema.tenantUsers.role,
+      isActive: schema.tenantUsers.isActive,
+    })
+    .from(schema.tenantUsers)
+    .innerJoin(schema.users, eq(schema.tenantUsers.userId, schema.users.id))
+    .where(and(eq(schema.tenantUsers.tenantId, tenantId), eq(schema.tenantUsers.userId, userId)))
+    .limit(1);
+  return result[0] ?? undefined;
 }
 
 export async function addUserToTenant(userId: number, tenantId: number, role: string = "agent"): Promise<schema.TenantUser> {
@@ -842,4 +866,47 @@ export async function getTenantIndustryConfig(tenantId: number) {
 export async function saveTenantIndustryConfig(tenantId: number, config: Record<string, unknown>) {
   const mod = await import('./db-industry');
   return mod.saveTenantIndustryConfig(tenantId, config);
+}
+
+export async function getTeamPerformanceMetrics(tenantId: number, timeRange: string): Promise<{ avgQualityScore: number; conversionRate: number; sentimentRate: number }> {
+  if (process.env["DB_ENABLED"] === "false") return { avgQualityScore: 85.5, conversionRate: 12.3, sentimentRate: 78.2 };
+  // In a real application, this would query the database for actual KPIs based on tenantId and timeRange
+  // For now, return mock data
+  return { avgQualityScore: 85.5, conversionRate: 12.3, sentimentRate: 78.2 };
+}
+
+export async function getAtRiskAgents(tenantId: number): Promise<Array<{ id: number; name: string; email: string }>> {
+  if (process.env["DB_ENABLED"] === "false") return [{ id: 1, name: "Agent Smith", email: "smith@example.com" }];
+  // In a real application, this would query the database for agents at risk based on tenantId
+  // For now, return mock data
+  return [];
+}
+
+export async function deleteTenantUser(userId: number, tenantId: number): Promise<void> {
+  if (process.env["DB_ENABLED"] === "false") return;
+  const database = getDbInstance();
+  try {
+    const result = await database.delete(schema.tenantUsers)
+      .where(and(eq(schema.tenantUsers.userId, userId), eq(schema.tenantUsers.tenantId, tenantId)))
+      .returning();
+    if (result.length === 0) throw new Error("Tenant user not found or access denied");
+  } catch (error: unknown) {
+    logger.error("[DB] Failed to delete tenant user", { error: error instanceof Error ? error.message : String(error), userId, tenantId });
+    throw error;
+  }
+}
+
+export async function updateTenantUser(userId: number, tenantId: number, data: Partial<schema.InsertTenantUser>): Promise<void> {
+  if (process.env["DB_ENABLED"] === "false") return;
+  const database = getDbInstance();
+  try {
+    const result = await database.update(schema.tenantUsers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(schema.tenantUsers.userId, userId), eq(schema.tenantUsers.tenantId, tenantId)))
+      .returning();
+    if (result.length === 0) throw new Error("Tenant user not found or access denied");
+  } catch (error: unknown) {
+    logger.error("[DB] Failed to update tenant user", { error: error instanceof Error ? error.message : String(error), userId, tenantId });
+    throw error;
+  }
 }

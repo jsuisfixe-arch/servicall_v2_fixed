@@ -27,11 +27,11 @@ export const aiRouter = router({
   /**
    * Liste tous les rôles IA d'un tenant
    */
-  listModels: protectedProcedure
-    .input(z.object({ tenantId: z.number() }))
-    .query(async ({ input }) => {
+  listModels: tenantProcedure
+    .query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       const roles = Array.from(aiRolesStore.values()).filter(
-        (r) => r['tenantId'] === input.tenantId
+        (r) => r["tenantId"] === tenantId
       );
       return { roles, total: roles.length };
     }),
@@ -39,11 +39,12 @@ export const aiRouter = router({
   /**
    * Récupère un rôle IA par ID
    */
-  getModel: protectedProcedure
-    .input(z.object({ tenantId: z.number(), modelId: z.number() }))
-    .query(async ({ input }) => {
+  getModel: tenantProcedure
+    .input(z.object({ modelId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const tenantId = ctx.tenantId;
       const role = aiRolesStore.get(input.modelId);
-      if (!role || role['tenantId'] !== input.tenantId) {
+      if (!role || role["tenantId"] !== tenantId) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Rôle IA introuvable' });
       }
       return role;
@@ -52,30 +53,33 @@ export const aiRouter = router({
   /**
    * Crée un nouveau rôle IA
    */
-  createModel: protectedProcedure
-    .input(aiRoleSchema.extend({ tenantId: z.number() }))
-    .mutation(async ({ input }) => {
+  createModel: tenantProcedure
+    .input(aiRoleSchema)
+    .mutation(async ({ input, ctx }) => {
+      const tenantId = ctx.tenantId;
       const id = nextRoleId++;
       const role: Record<string, unknown> = {
         id,
         ...input,
+        tenantId,
         status: 'active',
         createdAt: new Date(),
         updatedAt: new Date(),
       };
       aiRolesStore.set(id, role);
-      logger.info('[AI Router] Rôle IA créé', { id, tenantId: input.tenantId });
+      logger.info('[AI Router] Rôle IA créé', { id, tenantId });
       return { success: true, role };
     }),
 
   /**
    * Met à jour un rôle IA existant
    */
-  updateModel: protectedProcedure
-    .input(aiRoleSchema.partial().extend({ tenantId: z.number(), modelId: z.number() }))
-    .mutation(async ({ input }) => {
+  updateModel: tenantProcedure
+    .input(aiRoleSchema.partial().extend({ modelId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const tenantId = ctx.tenantId;
       const existing = aiRolesStore.get(input.modelId);
-      if (!existing || existing['tenantId'] !== input.tenantId) {
+      if (!existing || existing["tenantId"] !== tenantId) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Rôle IA introuvable' });
       }
       const updated: Record<string, unknown> = { ...existing, ...input, updatedAt: new Date() };
@@ -87,11 +91,12 @@ export const aiRouter = router({
   /**
    * Supprime un rôle IA
    */
-  deleteModel: protectedProcedure
-    .input(z.object({ tenantId: z.number(), modelId: z.number() }))
-    .mutation(async ({ input }) => {
+  deleteModel: tenantProcedure
+    .input(z.object({ modelId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const tenantId = ctx.tenantId;
       const existing = aiRolesStore.get(input.modelId);
-      if (!existing || existing['tenantId'] !== input.tenantId) {
+      if (!existing || existing["tenantId"] !== tenantId) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Rôle IA introuvable' });
       }
       aiRolesStore.delete(input.modelId);

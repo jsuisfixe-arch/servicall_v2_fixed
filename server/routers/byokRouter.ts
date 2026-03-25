@@ -3,7 +3,7 @@
  * Endpoints tRPC pour gérer les clés API centralisées
  */
 
-import { router, protectedProcedure } from "../_core/trpc";
+import { router, tenantProcedure } from "../procedures";
 import { z } from "zod";
 import {
   saveAPIKey,
@@ -18,7 +18,7 @@ export const byokRouter = router({
   /**
    * Sauvegarder ou mettre à jour une clé API
    */
-  saveKey: protectedProcedure
+  saveKey: tenantProcedure
     .input(
       z.object({
         provider: z.string().min(1),
@@ -26,17 +26,17 @@ export const byokRouter = router({
       })
     )
     .mutation(async ({ input, ctx }) => {
-      const tenantId = ctx.user?.tenantId || ctx.user?.id || 1;
+      const tenantId = ctx.tenantId;
       return await saveAPIKey(tenantId, input.provider, input.key);
     }),
 
   /**
    * Récupérer une clé API (déchiffrée)
    */
-  getKey: protectedProcedure
+  getKey: tenantProcedure
     .input(z.object({ provider: z.string().min(1) }))
     .query(async ({ input, ctx }) => {
-      const tenantId = ctx.user?.tenantId || ctx.user?.id || 1;
+      const tenantId = ctx.tenantId;
       const key = await getAPIKey(tenantId, input.provider);
       return { key: key || null };
     }),
@@ -44,18 +44,18 @@ export const byokRouter = router({
   /**
    * Lister toutes les clés API (sans les valeurs)
    */
-  listKeys: protectedProcedure.query(async ({ ctx }) => {
-    const tenantId = ctx.user?.tenantId || ctx.user?.id || 1;
+  listKeys: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantId;
     return await listAPIKeys(tenantId);
   }),
 
   /**
    * Supprimer une clé API
    */
-  deleteKey: protectedProcedure
+  deleteKey: tenantProcedure
     .input(z.object({ provider: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      const tenantId = ctx.user?.tenantId || ctx.user?.id || 1;
+      const tenantId = ctx.tenantId;
       const success = await deleteAPIKey(tenantId, input.provider);
       return { success, message: success ? "Key deleted" : "Failed to delete key" };
     }),
@@ -63,7 +63,7 @@ export const byokRouter = router({
   /**
    * Tester une clé API
    */
-  testKey: protectedProcedure
+  testKey: tenantProcedure
     .input(
       z.object({
         provider: z.string().min(1),
@@ -77,8 +77,8 @@ export const byokRouter = router({
   /**
    * Récupérer les logs d'audit
    */
-  getAuditLogs: protectedProcedure.query(async ({ ctx }) => {
-    const tenantId = ctx.user?.tenantId || ctx.user?.id || 1;
+  getAuditLogs: tenantProcedure.query(async ({ ctx }) => {
+    const tenantId = ctx.tenantId;
     return await getAuditLogs(tenantId, 100);
   }),
 });

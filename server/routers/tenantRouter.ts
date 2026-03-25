@@ -27,7 +27,7 @@ export const tenantRouter = router({
   /**
    * Liste tous les tenants (alias pour compatibilité)
    */
-  list: protectedProcedure.query(async ({ ctx }) => {
+  list: adminProcedure.query(async ({ ctx }) => {
     if (process.env['DB_ENABLED'] === "false") {
       return [{
         id: 1,
@@ -96,7 +96,7 @@ export const tenantRouter = router({
   /**
    * Obtenir la liste des tenants de l'utilisateur
    */
-  getUserTenants: protectedProcedure.query(async ({ ctx }) => {
+  getUserTenants: adminProcedure.query(async ({ ctx }) => {
     let tenants;
     if (process.env['DB_ENABLED'] === "false") {
       tenants = [{

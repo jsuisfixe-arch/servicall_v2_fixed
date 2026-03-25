@@ -135,14 +135,15 @@ export const authRouter = router({
     .input(
       z.object({
         email: z.string().email(),
-        password: z.string(),
+        password: z.string().min(1).max(100), // SEC-12: Limit password length to prevent DoS
       })
     )
     .mutation(async ({ input, ctx }) => {
       const { email, password } = input;
 
       try {
-        logger.info("[Auth] Tentative de connexion", { email });
+        // SEC-11: Do not log email in clear text
+        logger.info("[Auth] Tentative de connexion");
 
         // 1. Récupérer l'utilisateur
         const user = await db.getUserByEmail(email);

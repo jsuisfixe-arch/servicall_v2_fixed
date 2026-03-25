@@ -7,10 +7,30 @@ import { RealtimeVoicePipeline } from "./services/realtimeVoicePipeline";
 import { appRouter } from "./routers";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { createContext } from "./_core/context";
+import { jwtVerify } from "jose";
+
+// SEC-1: Import security middlewares
+import helmet from "helmet";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import { loginLimiter, registerLimiter, apiLimiter } from "./middleware/rateLimit";
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+
+// SEC-1: Apply global security middlewares
+app.use(helmet());
+app.use(cors({
+  origin: true, // Allow all origins for proxy compatibility
+  credentials: true,
+}));
+app.use(cookieParser());
+app.use(express.json({ limit: '1mb' })); // SEC-12: Limit payload size
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+
+// SEC-2: Apply rate limiters to specific routes before tRPC
+app.use("/api/trpc/auth.login", loginLimiter);
+app.use("/api/trpc/auth.register", registerLimiter);
+app.use("/api/trpc", apiLimiter);
 
 // tRPC middleware
 app.use(

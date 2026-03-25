@@ -31,11 +31,14 @@ class SDKServer {
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
 
+    const jti = crypto.randomUUID(); // Protection contre le replay
+    await db.addRevokedToken(jti, expirationSeconds);
+
     return await new SignJWT({ openId, name: options.name ?? "" })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setExpirationTime(expirationSeconds)
       .setIssuedAt(Math.floor(issuedAt / 1000))
-      .setJti(crypto.randomUUID()) // Protection contre le replay
+      .setJti(jti)
       .sign(secretKey);
   }
 
@@ -44,9 +47,15 @@ class SDKServer {
 
     try {
       const secretKey = this.getSessionSecret();
-      const { payload } = await jwtVerify(token, secretKey, {
+      const { payload, protectedHeader } = await jwtVerify(token, secretKey, {
         algorithms: ["HS256"],
       });
+
+      // Check if the token is revoked
+      const isRevoked = await db.isTokenRevoked(payload.jti as string);
+      if (isRevoked) {
+        return null;
+      }
       
       const { openId, name } = payload as Record<string, unknown>;
       if (!openId || typeof openId !== "string") return null;

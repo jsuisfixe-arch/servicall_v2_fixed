@@ -2,9 +2,7 @@
 /**
  * Services Router - 10 Services Métier Avancés
  * Extracteur de Leads, Mémoire IA, Workflows, Rapports, Webhooks, Blueprints, Stripe, Email, Monitoring, Training
- */
-
-import { router, protectedProcedure } from "../_core/trpc";
+ *import { router, tenantProcedure } from "../procedures";
 import { z } from "zod";
 import { db } from "../db";
 import {
@@ -19,17 +17,17 @@ import {
   aiMetrics,
   trainingModules,
 } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 export const servicesRouter = router({
   // ============================================
   // SERVICE 1: Lead Extraction
   // ============================================
   leads: router({
-    search: protectedProcedure
+    search: tenantProcedure
       .input(z.object({ query: z.string(), source: z.string().optional() }))
       .query(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         // Recherche locale (sans API externe requise)
         const results = await db
           .select()
@@ -39,10 +37,10 @@ export const servicesRouter = router({
         return { success: true, data: results };
       }),
 
-    import: protectedProcedure
+    import: tenantProcedure
       .input(z.object({ name: z.string(), email: z.string(), company: z.string().optional() }))
       .mutation(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const result = await db
           .insert(leads)
           .values({
@@ -56,8 +54,8 @@ export const servicesRouter = router({
         return { success: true, data: result[0]! };
       }),
 
-    getHistory: protectedProcedure.query(async ({ ctx }) => {
-      const tenantId = ctx.user?.tenantId || 1;
+    getHistory: tenantProcedure.query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       return await db.select().from(leads).where(eq(leads.tenantId, tenantId)).limit(50);
     }),
   }),
@@ -66,19 +64,19 @@ export const servicesRouter = router({
   // SERVICE 2: Contact Memory (AI)
   // ============================================
   contactMemory: router({
-    getMemory: protectedProcedure
+    getMemory: tenantProcedure
       .input(z.object({ contactId: z.number() }))
       .query(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const memories = await db
           .select()
           .from(contactMemories)
-          .where(eq(contactMemories.contactId, input.contactId))
+          .where(and(eq(contactMemories.contactId, input.contactId), eq(contactMemories.tenantId, tenantId)))
           .limit(10);
         return { success: true, data: memories };
       }),
 
-    saveInteraction: protectedProcedure
+    saveInteraction: tenantProcedure
       .input(
         z.object({
           contactId: z.number(),
@@ -88,7 +86,7 @@ export const servicesRouter = router({
         })
       )
       .mutation(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const result = await db
           .insert(contactMemories)
           .values({
@@ -102,10 +100,10 @@ export const servicesRouter = router({
         return { success: true, data: result[0]! };
       }),
 
-    delete: protectedProcedure
+    delete: tenantProcedure
       .input(z.object({ memoryId: z.number() }))
       .mutation(async ({ input }) => {
-        await db.delete(contactMemories).where(eq(contactMemories.id, input.memoryId));
+        await db.delete(contactMemories).where(and(eq(contactMemories.id, input.memoryId), eq(contactMemories.tenantId, ctx.tenantId)));
         return { success: true };
       }),
   }),
@@ -114,15 +112,15 @@ export const servicesRouter = router({
   // SERVICE 3: Workflow Builder
   // ============================================
   workflows: router({
-    list: protectedProcedure.query(async ({ ctx }) => {
-      const tenantId = ctx.user?.tenantId || 1;
+    list: tenantProcedure.query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       return await db.select().from(workflows).where(eq(workflows.tenantId, tenantId));
     }),
 
-    create: protectedProcedure
+    create: tenantProcedure
       .input(z.object({ name: z.string(), definition: z.record(z.unknown()) }))
       .mutation(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const result = await db
           .insert(workflows)
           .values({
@@ -134,21 +132,21 @@ export const servicesRouter = router({
         return { success: true, data: result[0]! };
       }),
 
-    update: protectedProcedure
+    update: tenantProcedure
       .input(z.object({ id: z.number(), definition: z.record(z.unknown()) }))
       .mutation(async ({ input }) => {
         const result = await db
           .update(workflows)
           .set({ definition: input.definition, updatedAt: new Date() })
-          .where(eq(workflows.id, input.id))
+          .where(and(eq(workflows.id, input.id), eq(workflows.tenantId, ctx.tenantId)))
           .returning();
         return { success: true, data: result[0]! };
       }),
 
-    delete: protectedProcedure
+    delete: tenantProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
-        await db.delete(workflows).where(eq(workflows.id, input.id));
+        await db.delete(workflows).where(and(eq(workflows.id, input.id), eq(workflows.tenantId, ctx.tenantId)));
         return { success: true };
       }),
   }),
@@ -157,10 +155,10 @@ export const servicesRouter = router({
   // SERVICE 4: Weekly Reports
   // ============================================
   reports: router({
-    sendTestReport: protectedProcedure
+    sendTestReport: tenantProcedure
       .input(z.object({ email: z.string().email() }))
       .mutation(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const htmlContent = `<h1>Test Report</h1><p>This is a test weekly report for ${input.email}</p>`;
         const result = await db
           .insert(reports)
@@ -174,8 +172,8 @@ export const servicesRouter = router({
         return { success: true, message: "Test report generated", data: result[0]! };
       }),
 
-    getReports: protectedProcedure.query(async ({ ctx }) => {
-      const tenantId = ctx.user?.tenantId || 1;
+    getReports: tenantProcedure.query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       return await db.select().from(reports).where(eq(reports.tenantId, tenantId)).limit(10);
     }),
   }),
@@ -184,10 +182,10 @@ export const servicesRouter = router({
   // SERVICE 5: Webhooks
   // ============================================
   webhooks: router({
-    createSubscription: protectedProcedure
+    createSubscription: tenantProcedure
       .input(z.object({ url: z.string().url(), events: z.array(z.string()) }))
       .mutation(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const result = await db
           .insert(webhookSubscriptions)
           .values({
@@ -199,15 +197,15 @@ export const servicesRouter = router({
         return { success: true, data: result[0]! };
       }),
 
-    listSubscriptions: protectedProcedure.query(async ({ ctx }) => {
-      const tenantId = ctx.user?.tenantId || 1;
+    listSubscriptions: tenantProcedure.query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       return await db.select().from(webhookSubscriptions).where(eq(webhookSubscriptions.tenantId, tenantId));
     }),
 
-    delete: protectedProcedure
+    delete: tenantProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
-        await db.delete(webhookSubscriptions).where(eq(webhookSubscriptions.id, input.id));
+        await db.delete(webhookSubscriptions).where(and(eq(webhookSubscriptions.id, input.id), eq(webhookSubscriptions.tenantId, ctx.tenantId)));
         return { success: true };
       }),
   }),
@@ -216,14 +214,14 @@ export const servicesRouter = router({
   // SERVICE 6: Blueprint Marketplace
   // ============================================
   blueprints: router({
-    list: protectedProcedure.query(async () => {
+    list: tenantProcedure.query(async () => {
       return await db.select().from(blueprints).limit(20);
     }),
 
-    install: protectedProcedure
+    install: tenantProcedure
       .input(z.object({ blueprintId: z.number() }))
       .mutation(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const blueprint = await db.select().from(blueprints).where(eq(blueprints.id, input.blueprintId)).limit(1);
         if (blueprint.length === 0) return { success: false, message: "Blueprint not found" };
         // Créer un workflow à partir du blueprint
@@ -243,8 +241,8 @@ export const servicesRouter = router({
   // SERVICE 7: Stripe Connect
   // ============================================
   stripe: router({
-    getStatus: protectedProcedure.query(async ({ ctx }) => {
-      const tenantId = ctx.user?.tenantId || 1;
+    getStatus: tenantProcedure.query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       const connection = await db
         .select()
         .from(stripeConnections)
@@ -256,7 +254,7 @@ export const servicesRouter = router({
       };
     }),
 
-    getConnectUrl: protectedProcedure.query(async () => {
+    getConnectUrl: tenantProcedure.query(async () => {
       return {
         url: "https://connect.stripe.com/oauth/authorize?client_id=YOUR_CLIENT_ID&state=YOUR_STATE",
       };
@@ -267,8 +265,8 @@ export const servicesRouter = router({
   // SERVICE 8: Email Configuration
   // ============================================
   emailConfig: router({
-    list: protectedProcedure.query(async ({ ctx }) => {
-      const tenantId = ctx.user?.tenantId || 1;
+    list: tenantProcedure.query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       const configs = await db.select().from(emailConfigs).where(eq(emailConfigs.tenantId, tenantId));
       // Ne pas retourner les credentials chiffrées
       return configs.map((c) => ({
@@ -280,10 +278,10 @@ export const servicesRouter = router({
       }));
     }),
 
-    create: protectedProcedure
+    create: tenantProcedure
       .input(z.object({ provider: z.string(), fromEmail: z.string().email(), credentials: z.string() }))
       .mutation(async ({ input, ctx }) => {
-        const tenantId = ctx.user?.tenantId || 1;
+        const tenantId = ctx.tenantId;
         const result = await db
           .insert(emailConfigs)
           .values({
@@ -301,8 +299,8 @@ export const servicesRouter = router({
   // SERVICE 9: AI Monitoring
   // ============================================
   aiMonitoring: router({
-    getMetrics: protectedProcedure.query(async ({ ctx }) => {
-      const tenantId = ctx.user?.tenantId || 1;
+    getMetrics: tenantProcedure.query(async ({ ctx }) => {
+      const tenantId = ctx.tenantId;
       const metrics = await db
         .select()
         .from(aiMetrics)
@@ -320,9 +318,9 @@ export const servicesRouter = router({
   // SERVICE 10: Training Modules
   // ============================================
   training: router({
-    getProgress: protectedProcedure.query(async ({ ctx }) => {
-      const userId = ctx.user?.id || 1;
-      const tenantId = ctx.user?.tenantId || 1;
+    getProgress: tenantProcedure.query(async ({ ctx }) => {
+      const userId = ctx.user.id;
+      const tenantId = ctx.tenantId;
       return await db
         .select()
         .from(trainingModules)
@@ -330,11 +328,11 @@ export const servicesRouter = router({
         .limit(10);
     }),
 
-    startModule: protectedProcedure
+    startModule: tenantProcedure
       .input(z.object({ moduleType: z.string() }))
       .mutation(async ({ input, ctx }) => {
-        const userId = ctx.user?.id || 1;
-        const tenantId = ctx.user?.tenantId || 1;
+        const userId = ctx.user.id;
+        const tenantId = ctx.tenantId;
         const result = await db
           .insert(trainingModules)
           .values({

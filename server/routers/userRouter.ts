@@ -108,6 +108,11 @@ export const userRouter = router({
         if (!ctx.tenantId) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Tenant ID is required" });
         }
+        // Verify that the userId belongs to the current tenant
+        const member = await db.getTenantMemberById(input.userId, ctx.tenantId);
+        if (!member) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "User not found in this tenant" });
+        }
         await db.updateTenantUser(input.userId, ctx.tenantId, {
           role: input.role,
           isActive: input.isActive,
@@ -136,11 +141,8 @@ export const userRouter = router({
         const result = {
           totalMembers: members.length,
           activeAgents,
-          teamPerformance: 85,
-          alerts: [
-            { id: 1, type: "warning", message: "Agent Smith est inactif depuis 2h" },
-            { id: 2, type: "info", message: "Objectif hebdomadaire atteint à 70%" }
-          ]
+          teamPerformance: (await db.getTeamPerformanceMetrics(ctx.tenantId, "monthly")).avgQualityScore,
+          alerts: (await db.getAtRiskAgents(ctx.tenantId)).map(agent => ({ id: agent.id, type: "warning", message: `Agent ${agent.name} est inactif` }))
         };
         return teamKPIsSchema.parse(result);
       } catch (error: any) {

@@ -3,17 +3,20 @@
  */
 
 import { z } from 'zod';
-import { protectedProcedure, router } from '../procedures';
+import { tenantProcedure, router } from '../procedures';
 import { TRPCError } from '@trpc/server';
 import { agentCoachingService } from '../services/agentCoachingService';
 import { callSimulatorService } from '../services/callSimulatorService';
 import { logger as loggingService } from "../infrastructure/logger";
+import { db } from "../db";
+import { calls, users, simulatedCalls } from "../../drizzle/schema";
+import { sql, and, gte, lte, eq } from "drizzle-orm";
 
 export const coachingRouter = router({
   /**
    * Génère un feedback de coaching pour un appel
    */
-  generateFeedback: protectedProcedure
+  generateFeedback: tenantProcedure
     .input(
       z.object({
         callId: z.number(),
@@ -23,7 +26,7 @@ export const coachingRouter = router({
       try {
         const feedback = await agentCoachingService.analyzeCallAndGenerateFeedback(
           input.callId,
-          ctx.tenantId!
+          ctx.tenantId
         );
 
         return {
@@ -45,7 +48,7 @@ export const coachingRouter = router({
   /**
    * Récupère le feedback d'un appel
    */
-  getCallFeedback: protectedProcedure
+  getCallFeedback: tenantProcedure
     .input(
       z.object({
         callId: z.number(),
@@ -55,7 +58,7 @@ export const coachingRouter = router({
       try {
         const feedback = await agentCoachingService.getCallFeedback(
           input.callId,
-          ctx.tenantId!
+          ctx.tenantId
         );
 
         return {
@@ -78,7 +81,7 @@ export const coachingRouter = router({
    * Récupère les métriques de performance d'un agent
    * ✅ BLOC 5: Cache Redis avec TTL 60s
    */
-  getAgentPerformance: protectedProcedure
+  getAgentPerformance: tenantProcedure
     .input(
       z.object({
         agentId: z.number(),
@@ -100,7 +103,7 @@ export const coachingRouter = router({
           async () => {
             return await agentCoachingService.getAgentPerformanceMetrics(
               input.agentId,
-              ctx.tenantId!,
+              ctx.tenantId,
               new Date(input.startDate),
               new Date(input.endDate)
             );
@@ -134,9 +137,9 @@ export const coachingRouter = router({
   /**
    * Liste tous les scénarios disponibles avec fallback si vide
    */
-  listSimulationScenarios: protectedProcedure.query(async ({ ctx }) => {
+  listSimulationScenarios: tenantProcedure.query(async ({ ctx }) => {
     try {
-      const scenarios = await callSimulatorService.listScenarios(ctx.tenantId!);
+      const scenarios = await callSimulatorService.listScenarios(ctx.tenantId);
 
       if (!scenarios || scenarios.length === 0) {
         return {
@@ -170,7 +173,7 @@ export const coachingRouter = router({
   /**
    * Démarre une simulation d'appel
    */
-  startSimulation: protectedProcedure
+  startSimulation: tenantProcedure
     .input(
       z.object({
         scenarioId: z.string(),
@@ -180,7 +183,7 @@ export const coachingRouter = router({
       try {
         const simulation = await callSimulatorService.startSimulation(
           ctx.user.id,
-          ctx.tenantId!,
+          ctx.tenantId,
           input.scenarioId
         );
 
@@ -192,6 +195,7 @@ export const coachingRouter = router({
             status: simulation.status,
             transcript: simulation.transcript,
             startedAt: simulation.startedAt,
+            completedAt: simulation.completedAt,
           },
         };
       } catch (error: any) {
@@ -209,7 +213,7 @@ export const coachingRouter = router({
   /**
    * Envoie une réponse de l'agent dans une simulation
    */
-  sendAgentResponse: protectedProcedure
+  sendAgentResponse: tenantProcedure
     .input(
       z.object({
         callId: z.string(),
@@ -221,7 +225,7 @@ export const coachingRouter = router({
         const result = await callSimulatorService.processAgentResponse(
           input.callId,
           ctx.user.id,
-          ctx.tenantId!,
+          ctx.tenantId,
           input.message
         );
 
@@ -246,7 +250,7 @@ export const coachingRouter = router({
   /**
    * Récupère l'historique des simulations d'un agent avec gestion d'état vide
    */
-  getSimulationHistory: protectedProcedure
+  getSimulationHistory: tenantProcedure
     .input(
       z.object({
         agentId: z.number().optional(),
@@ -258,7 +262,7 @@ export const coachingRouter = router({
         const agentId = input.agentId || ctx.user.id;
         const history = await callSimulatorService.getAgentSimulationHistory(
           agentId,
-          ctx.tenantId!,
+          ctx.tenantId,
           input.limit
         );
 
@@ -298,7 +302,7 @@ export const coachingRouter = router({
    * Récupère le dashboard de performance de l'équipe
    * ✅ BLOC 2: Implémentation de l'agrégation des performances avec Drizzle
    */
-  getTeamPerformanceDashboard: protectedProcedure
+  getTeamPerformanceDashboard: tenantProcedure
     .input(
       z.object({
         startDate: z.string(),
@@ -307,61 +311,41 @@ export const coachingRouter = router({
     )
     .query(async ({ input, ctx }) => {
       try {
-        const { dbManager } = await import('../services/dbManager');
-        const client = dbManager.client;
-        
-        if (!client) {
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database client not available' });
-        }
-
-        const tenantId = ctx.tenantId! || 1;
+        const tenantId = ctx.tenantId;
         const startDate = new Date(input.startDate);
         const endDate = new Date(input.endDate);
 
-        // 1. Agrégation des appels réels par agent via postgres-js direct (Performance & Sécurité)
-        const callStatsRaw = await client`
-          SELECT 
-            c.agent_id as "agentId",
-            u.name as "agentName",
-            COUNT(c.id)::int as "totalCalls",
-            AVG(c.duration)::float as "avgDuration",
-            COUNT(CASE WHEN c.outcome = 'success' THEN 1 END)::int as "successfulCalls"
-          FROM calls c
-          LEFT JOIN users u ON c.agent_id = u.id
-          WHERE c.tenant_id = ${tenantId}
-            AND c.created_at >= ${startDate}
-            AND c.created_at <= ${endDate}
-            AND c.agent_id IS NOT NULL
-          GROUP BY c.agent_id, u.name
-        `;
-        
-        // Sécurisation contre les résultats undefined
-        const callStats = (callStatsRaw || []).map(row => ({
-          agentId: row['agentId'] || 0,
-          agentName: row['agentName'] || "Inconnu",
-          totalCalls: row['totalCalls'] || 0,
-          avgDuration: row['avgDuration'] || 0,
-          successfulCalls: row['successfulCalls'] || 0
-        }));
+        // 1. Agrégation des appels réels par agent via Drizzle ORM
+        const callStats = await db.select({
+          agentId: calls.agentId,
+          agentName: users.name,
+          totalCalls: sql<number>`count(${calls.id})::int`,
+          avgDuration: sql<number>`avg(${calls.duration})::float`,
+          successfulCalls: sql<number>`count(case when ${calls.outcome} = 'success' then 1 end)::int`,
+        })
+        .from(calls)
+        .leftJoin(users, eq(calls.agentId, users.id))
+        .where(and(
+          eq(calls.tenantId, tenantId),
+          gte(calls.createdAt, startDate),
+          lte(calls.createdAt, endDate),
+          sql`${calls.agentId} is not null`
+        ))
+        .groupBy(calls.agentId, users.name);
 
-        // 2. Agrégation des simulations par agent via postgres-js
-        const simulationStatsRaw = await client`
-          SELECT 
-            agent_id as "agentId",
-            AVG(score)::float as "avgScore",
-            COUNT(id)::int as "totalSimulations"
-          FROM simulated_calls
-          WHERE tenant_id = ${tenantId}
-            AND created_at >= ${startDate}
-            AND created_at <= ${endDate}
-          GROUP BY agent_id
-        `;
-        
-        const simulationStats = (simulationStatsRaw || []).map(row => ({
-          agentId: row['agentId'] || 0,
-          avgScore: row['avgScore'] || 0,
-          totalSimulations: row['totalSimulations'] || 0
-        }));
+        // 2. Agrégation des simulations par agent via Drizzle ORM
+        const simulationStats = await db.select({
+          agentId: simulatedCalls.agentId,
+          avgScore: sql<number>`avg(${simulatedCalls.score})::float`,
+          totalSimulations: sql<number>`count(${simulatedCalls.id})::int`,
+        })
+        .from(simulatedCalls)
+        .where(and(
+          eq(simulatedCalls.tenantId, tenantId),
+          gte(simulatedCalls.createdAt, startDate),
+          lte(simulatedCalls.createdAt, endDate)
+        ))
+        .groupBy(simulatedCalls.agentId);
 
         // 3. Combiner les statistiques
         const agentPerformance = callStats.map((callStat) => {
