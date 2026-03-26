@@ -20,7 +20,12 @@ async function getDb() {
 }
 
 async function main() {
-  const adminEmail = process.env['ADMIN_EMAIL'] || "admin@servicall.local";
+  // ✅ BLOC 1: Fallback codé en dur supprimé — ADMIN_EMAIL requis
+  const adminEmail = process.env['ADMIN_EMAIL'];
+  if (!adminEmail) {
+    logger.error('[InitAdminAuto] ❌ ADMIN_EMAIL est requis dans les variables d\'environnement.');
+    process.exit(1);
+  }
   const adminPassword = process.env['ADMIN_PASSWORD'] || "Admin@Servicall2024!";
   const adminName = process.env['ADMIN_NAME'] || "Administrateur Servicall";
 

@@ -133,7 +133,8 @@ class DialerEngineService {
       .select({
         cpId: campaignProspects.id,
         prospectId: campaignProspects.prospectId,
-        metadata: campaignProspects.metadata,
+        phoneNumber: campaignProspects.phoneNumber,
+        name: campaignProspects.name,
       })
       .from(campaignProspects)
       .where(
@@ -170,9 +171,8 @@ class DialerEngineService {
 
     for (const row of campaignRows) {
       const prospect = row.prospectId ? prospectMap.get(row.prospectId) : null;
-      // Téléphone : depuis la table prospects ou depuis metadata (stocké lors de addProspects)
-      const meta = row.metadata as Record<string, unknown> | null;
-      const phone = prospect?.phone ?? meta?.phone ?? null;
+      // Téléphone : depuis la table prospects ou depuis la table campaign_prospects
+      const phone = prospect?.phone ?? row.phoneNumber;
       if (!phone) continue;
 
       const job: CallJob = {
@@ -182,7 +182,7 @@ class DialerEngineService {
         phoneNumber: phone,
         prospectName: prospect
           ? `${prospect.firstName ?? ""} ${prospect.lastName ?? ""}`.trim() || "Prospect"
-          : (meta?.name ?? "Prospect"),
+          : (row.name ?? "Prospect"),
         attemptNumber: 1,
       };
 
@@ -212,7 +212,11 @@ class DialerEngineService {
     // Marquer comme "en cours"
     await db
       .update(campaignProspects)
-      .set({ status: "dialing", metadata: { lastAttempt: new Date().toISOString(), attempt: attemptNumber } })
+      .set({ 
+        status: "dialing", 
+        lastAttemptAt: new Date(), 
+        callAttempts: attemptNumber 
+      })
       .where(
         and(
           eq(campaignProspects.campaignId, campaignId),

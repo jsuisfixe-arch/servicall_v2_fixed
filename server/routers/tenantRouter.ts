@@ -2,7 +2,7 @@
  * Tenant Router - Gestion des tenants et changement de contexte
  */
 
-import { router, protectedProcedure } from "../procedures";
+import { router } from "../procedures";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import * as db from "../db";
@@ -27,16 +27,8 @@ export const tenantRouter = router({
   /**
    * Liste tous les tenants (alias pour compatibilité)
    */
+  // ✅ BLOC 1: DB_ENABLED guard supprimé
   list: adminProcedure.query(async ({ ctx }) => {
-    if (process.env['DB_ENABLED'] === "false") {
-      return [{
-        id: 1,
-        name: "Demo Tenant",
-        slug: "demo",
-        role: "admin",
-        isActive: true,
-      }];
-    }
     return await db.getUserTenants(ctx.user.id);
   }),
 
@@ -96,19 +88,9 @@ export const tenantRouter = router({
   /**
    * Obtenir la liste des tenants de l'utilisateur
    */
+  // ✅ BLOC 1: DB_ENABLED guard supprimé
   getUserTenants: adminProcedure.query(async ({ ctx }) => {
-    let tenants;
-    if (process.env['DB_ENABLED'] === "false") {
-      tenants = [{
-        id: 1,
-        name: "Demo Tenant",
-        slug: "demo",
-        role: "admin",
-        isActive: true,
-      }];
-    } else {
-      tenants = await db.getUserTenants(ctx.user.id);
-    }
+    const tenants = await db.getUserTenants(ctx.user.id);
 
     logger.info("User tenants retrieved", {
       userId: ctx.user.id,
@@ -158,7 +140,7 @@ export const tenantRouter = router({
   /**
    * Changer de tenant
    */
-  switchTenant: protectedProcedure
+  switchTenant: tenantProcedure
     .input(
       z.object({
         tenantId: z.number().int().positive(),
@@ -188,7 +170,7 @@ export const tenantRouter = router({
   /**
    * Initialiser le tenant par défaut (appelé après login)
    */
-  initializeDefaultTenant: protectedProcedure.mutation(async ({ ctx }) => {
+  initializeDefaultTenant: tenantProcedure.mutation(async ({ ctx }) => {
     const result = await initializeDefaultTenant(ctx.user.id, ctx.res);
 
     if (!result) {

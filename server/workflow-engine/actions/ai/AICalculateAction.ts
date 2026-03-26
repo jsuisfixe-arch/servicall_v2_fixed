@@ -1,6 +1,6 @@
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
-import { Logger } from "../../utils/Logger";
+import type { FinalExecutionContext } from "../structured-types";
+import { Logger } from "../../infrastructure/logger";
 
 interface AICalculateResult { result: string; label: string; }
 

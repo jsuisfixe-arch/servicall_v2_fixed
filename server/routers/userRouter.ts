@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router } from "../_core/trpc";
-import { adminProcedure, managerProcedure } from "../_core/trpc";
+import { adminProcedure, managerProcedure } from "../procedures";
 import { TRPCError } from "@trpc/server";
 import * as db from "../db";
 import { logger } from "../infrastructure/logger";

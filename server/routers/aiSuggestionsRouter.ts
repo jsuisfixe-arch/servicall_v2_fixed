@@ -15,11 +15,10 @@ export const aiSuggestionsRouter = router({
    */
   getPending: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
     }))
     .query(async ({ input }) => {
       try {
-        return await ShadowAgentService.getPendingSuggestions(input.tenantId);
+        return await ShadowAgentService.getPendingSuggestions(ctx.tenantId);
       } catch (error: any) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -33,11 +32,10 @@ export const aiSuggestionsRouter = router({
    */
   detectMissedCalls: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
     }))
     .mutation(async ({ input }) => {
       try {
-        return await ShadowAgentService.detectMissedCallsAndSuggest(input.tenantId);
+        return await ShadowAgentService.detectMissedCallsAndSuggest(ctx.tenantId);
       } catch (error: any) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -51,14 +49,13 @@ export const aiSuggestionsRouter = router({
    */
   approve: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
       suggestionId: z.number(),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
         return await ShadowAgentService.approveSuggestion(
           input.suggestionId,
-          input.tenantId,
+          ctx.tenantId,
           ctx.user.id
         );
       } catch (error: any) {
@@ -74,14 +71,13 @@ export const aiSuggestionsRouter = router({
    */
   reject: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
       suggestionId: z.number(),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
         return await ShadowAgentService.rejectSuggestion(
           input.suggestionId,
-          input.tenantId,
+          ctx.tenantId,
           ctx.user.id
         );
       } catch (error: any) {
@@ -97,7 +93,6 @@ export const aiSuggestionsRouter = router({
    */
   modify: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
       suggestionId: z.number(),
       newContent: z.string().min(1).max(500),
     }))
@@ -105,7 +100,7 @@ export const aiSuggestionsRouter = router({
       try {
         return await ShadowAgentService.modifySuggestion(
           input.suggestionId,
-          input.tenantId,
+          ctx.tenantId,
           input.newContent
         );
       } catch (error: any) {

@@ -99,9 +99,7 @@ export default function Campaigns() {
     { id: 3, name: "Sondage Satisfaction Client", type: "ai_qualification", status: "active", contacts: 3200, conversion: "15%" },
   ];
 
-  const displayCampaigns = campaignsQuery.data?.data && campaignsQuery.data.data.length > 0 
-    ? campaignsQuery.data.data 
-    : mockCampaigns;
+  const displayCampaigns = campaignsQuery.data?.data || [];
 
   const handleCreateCampaign = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -280,11 +278,11 @@ export default function Campaigns() {
                   <div className="grid grid-cols-2 gap-4 mb-6">
                     <div className="bg-muted/50 p-3 rounded-lg">
                       <p className="text-xs text-muted-foreground mb-1">Contacts</p>
-                      <p className="text-lg font-bold">{(campaign.contacts as number) || 0}</p>
+                      <p className="text-lg font-bold">{(campaign.prospectCount as number) || 0}</p>
                     </div>
                     <div className="bg-muted/50 p-3 rounded-lg">
-                      <p className="text-xs text-muted-foreground mb-1">Conversion</p>
-                      <p className="text-lg font-bold text-primary">{(campaign.conversion as string) || "0%"}</p>
+                      <p className="text-xs text-muted-foreground mb-1">Statut</p>
+                      <p className="text-lg font-bold text-primary capitalize">{campaign.status}</p>
                     </div>
                   </div>
 

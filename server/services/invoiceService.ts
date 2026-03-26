@@ -61,38 +61,7 @@ export class InvoiceService {
       const tax = data.tax ?? 0;
       const totalAmount = data.amount + tax;
 
-      // ✅ MODE DÉMO : Stocker en mémoire si DB désactivée
-      if (process.env['DB_ENABLED'] === "false") {
-        const demoId = this.demoNextId++;
-        const demoInvoice = {
-          id: demoId,
-          tenantId: data.tenantId,
-          prospectId: data.prospectId ?? null,
-          callId: data.callId ?? null,
-          invoiceNumber,
-          amount: data.amount.toString(),
-          tax: tax.toString(),
-          totalAmount: totalAmount.toString(),
-          currency: "EUR",
-          description: data.description || `Facture du ${new Date().toLocaleDateString('fr-FR')}`,
-          template: data.template ?? "default",
-          status: "draft",
-          paymentStatus: "pending",
-          dueDate: null,
-          paidAt: null,
-          metadata: null,
-          secureToken: null,
-          secureLink: null,
-          linkExpiresAt: null,
-          sentAt: null,
-          acceptedAt: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        } satisfies import("../../drizzle/schema").CustomerInvoice;
-        this.demoInvoices.push(demoInvoice);
-        logger.info("[InvoiceService] Invoice created (demo mode)", { invoiceNumber, demoId });
-        return demoId;
-      }
+      // ✅ BLOC 1: Mode démo supprimé — toujours utiliser la vraie DB
 
       const db = await getDb();
       if (!db) {
@@ -147,10 +116,7 @@ export class InvoiceService {
    */
   static async getInvoiceById(invoiceId: number): Promise<import("../../drizzle/schema").CustomerInvoice | null> {
     try {
-      // ✅ MODE DÉMO
-      if (process.env['DB_ENABLED'] === "false") {
-        return this.demoInvoices.find(inv => inv.id === invoiceId) || null;
-      }
+      // ✅ BLOC 1: Mode démo supprimé — toujours utiliser la vraie DB
 
       const db = await getDb();
       if (!db) return null;
@@ -579,11 +545,7 @@ export class InvoiceService {
    */
   static async listInvoices(tenantId: number, limit = 50, offset = 0) {
     try {
-      // ✅ MODE DÉMO
-      if (process.env['DB_ENABLED'] === "false") {
-        const filtered = this.demoInvoices.filter(inv => inv.tenantId === tenantId);
-        return filtered.slice(offset, offset + limit);
-      }
+      // ✅ BLOC 1: Mode démo supprimé — toujours utiliser la vraie DB
 
       const db = await getDb();
       if (!db) return [];

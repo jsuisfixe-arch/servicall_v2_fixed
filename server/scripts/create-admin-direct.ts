@@ -1,6 +1,13 @@
 /**
  * Script direct de création du compte admin
  * Connexion directe à PostgreSQL sans passer par le dbManager
+ *
+ * ✅ BLOC 1 CORRIGÉ: Identifiants codés en dur supprimés.
+ * Utiliser les variables d'environnement :
+ *   ADMIN_EMAIL     (requis)
+ *   ADMIN_PASSWORD  (requis, min 12 caractères)
+ *   ADMIN_NAME      (optionnel, défaut: "Administrateur Système")
+ *   DATABASE_URL    (requis)
  */
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -10,12 +17,37 @@ import bcrypt from "bcryptjs";
 import { nanoid } from "nanoid";
 import { logger } from '../core/logger/index';
 
-const DATABASE_URL = process.env['DATABASE_URL'] || "postgresql://servicall:servicall_prod_2026@localhost:5432/servicall_crm";
+// ✅ BLOC 1: DATABASE_URL sans fallback codé en dur
+const DATABASE_URL = process.env['DATABASE_URL'];
+if (!DATABASE_URL) {
+  logger.error("❌ DATABASE_URL est requis. Définissez-la dans votre fichier .env");
+  process.exit(1);
+}
+
+// ✅ BLOC 1: Identifiants admin depuis les variables d'environnement uniquement
+const adminEmail = process.env['ADMIN_EMAIL'];
+const adminPassword = process.env['ADMIN_PASSWORD'];
+const adminName = process.env['ADMIN_NAME'] ?? "Administrateur Système";
+
+if (!adminEmail) {
+  logger.error("❌ ADMIN_EMAIL est requis. Définissez-la dans votre fichier .env");
+  process.exit(1);
+}
+
+if (!adminPassword) {
+  logger.error("❌ ADMIN_PASSWORD est requis. Définissez-la dans votre fichier .env");
+  process.exit(1);
+}
+
+if (adminPassword.length < 12) {
+  logger.error("❌ ADMIN_PASSWORD doit contenir au moins 12 caractères pour des raisons de sécurité.");
+  process.exit(1);
+}
 
 async function main() {
   logger.info("🔧 Connexion à PostgreSQL...");
   
-  const client = postgres(DATABASE_URL, { max: 1 });
+  const client = postgres(DATABASE_URL!, { max: 1 });
   const db = drizzle(client, { schema });
   
   try {
@@ -23,12 +55,8 @@ async function main() {
     await client`SELECT 1`;
     logger.info("✅ Connexion PostgreSQL réussie");
     
-    const email = "admin@servicall.com";
-    const password = "Admin@2026!";
-    const name = "Administrateur Système";
-    
     // Vérifier si l'admin existe déjà
-    const existing = await db.select().from(schema.users).where(eq(schema.users.email, email)).limit(1);
+    const existing = await db.select().from(schema.users).where(eq(schema.users.email, adminEmail!)).limit(1);
     
     let adminId: number;
     
@@ -37,19 +65,19 @@ async function main() {
       if (!existingAdmin) throw new Error("Admin record not found");
       adminId = existingAdmin.id;
       logger.info(`ℹ️  Admin déjà existant (id=${adminId}), mise à jour du mot de passe...`);
-      const passwordHash = await bcrypt.hash(password, 12);
+      const passwordHash = await bcrypt.hash(adminPassword!, 12);
       await db.update(schema.users)
         .set({ passwordHash, role: "admin", isActive: true })
-        .where(eq(schema.users.email, email));
+        .where(eq(schema.users.email, adminEmail!));
       logger.info("✅ Mot de passe mis à jour");
     } else {
-      const passwordHash = await bcrypt.hash(password, 12);
+      const passwordHash = await bcrypt.hash(adminPassword!, 12);
       const openId = nanoid();
       
       const inserted = await db.insert(schema.users).values({
         openId,
-        email,
-        name,
+        email: adminEmail!,
+        name: adminName,
         passwordHash,
         loginMethod: "password",
         role: "admin",
@@ -105,10 +133,11 @@ async function main() {
     logger.info("\n========================================");
     logger.info("✅ COMPTE ADMIN CRÉÉ AVEC SUCCÈS");
     logger.info("========================================");
-    logger.info(`  Email    : ${email}`);
-    logger.info(`  Password : ${password}`);
+    logger.info(`  Email    : ${adminEmail}`);
     logger.info(`  Rôle     : admin`);
     logger.info(`  Tenant   : default (id=${tenantId})`);
+    // ✅ BLOC 1: Ne jamais logger le mot de passe en clair
+    logger.info("  Password : [défini via ADMIN_PASSWORD]");
     logger.info("========================================\n");
     
   } catch (error: any) {

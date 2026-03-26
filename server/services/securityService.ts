@@ -325,11 +325,17 @@ const ALGORITHM = "aes-256-gcm";
 
 // ✅ SALT UNIQUE PAR DÉPLOIEMENT: Utilisation de crypto.scryptSync avec salt personnalisé
 // Le salt doit être unique par déploiement pour renforcer la sécurité
-const ENCRYPTION_SALT = process.env['ENCRYPTION_SALT'] || "servicall-v2-default-salt-change-in-production";
+// ✅ BLOC 1: Salt par défaut supprimé — ENCRYPTION_SALT requis
+const _encSalt = process.env['ENCRYPTION_SALT'];
+if (!_encSalt && !IS_BUILD) {
+  logger.error("[Security Service] 🚨 ERREUR CRITIQUE: ENCRYPTION_SALT n'est pas défini.");
+  logger.error("[Security Service] ENCRYPTION_SALT est OBLIGATOIRE dans tous les environnements.");
+  logger.error("[Security Service] Ajoutez-la dans votre .env: ENCRYPTION_SALT=votre-salt-aleatoire-32-chars");
+  throw new Error("ENCRYPTION_SALT is required but not defined in environment variables.");
+}
+const ENCRYPTION_SALT = _encSalt ?? "build-time-placeholder-not-used";
 
-if (!process.env['ENCRYPTION_SALT'] && !IS_BUILD) {
-  logger.warn("[Security Service] ⚠️  ENCRYPTION_SALT non défini. Utilisation d'un salt par défaut.");
-  logger.warn("[Security Service] Pour une sécurité optimale, définissez ENCRYPTION_SALT dans votre .env");
+if (false) { // Bloc supprimé — voir ci-dessus
 }
 
 /**

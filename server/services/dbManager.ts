@@ -103,14 +103,10 @@ export class DBManager {
       transaction: (cb: (tx: DrizzleDB) => Promise<unknown>) => cb({} as DrizzleDB),
     };
 
-    if (process.env['DB_ENABLED'] === "false" || !this._db) {
-      return new Proxy({} as DrizzleDB, {
-        get(_target, prop) {
-          return (mock as Record<string | symbol, unknown>)[prop as string] ?? (() => []);
-        }
-      });
+    // ✅ BLOC 1: DB_ENABLED mock supprimé — erreur explicite si DB non initialisée
+    if (!this._db) {
+      throw new Error('[DBManager] Base de données non initialisée. Appelez initialize() avant toute opération.');
     }
-
     return this._db;
   }
 

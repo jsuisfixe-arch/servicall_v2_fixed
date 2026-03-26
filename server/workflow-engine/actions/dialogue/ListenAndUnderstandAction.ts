@@ -9,8 +9,8 @@
 
 import { z } from "zod";
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
-import { Logger } from "../../utils/Logger";
+import type { FinalExecutionContext } from "../structured-types";
+import { Logger } from "../../infrastructure/logger";
 import { PlaceholderEngine } from "../../utils/PlaceholderEngine";
 import { getOpenAIClient } from "../../_core/openaiClient";
 import { AI_MODEL } from "../../../_core/aiModels";

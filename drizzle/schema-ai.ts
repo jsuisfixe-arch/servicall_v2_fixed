@@ -106,3 +106,25 @@ export const auditAiUsageRelations = relations(auditAiUsage, ({ one }) => ({
     references: [tenants.id],
   }),
 }));
+
+// ============================================
+// AI_ROLES TABLE — Persistance des rôles IA (Axe 2)
+// ============================================
+export const aiRoles = pgTable("ai_roles", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  prompt: text("prompt").notNull(),
+  model: varchar("model", { length: 100 }).default("gpt-4"),
+  temperature: decimal("temperature", { precision: 3, scale: 2 }).default("0.7"),
+  isActive: boolean("is_active").default(true),
+  metadata: json("metadata").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  tenantIdIdx: index("idx_ai_roles_tenant_id_idx").on(table.tenantId),
+}));
+
+export type AiRole = typeof aiRoles.$inferSelect;
+export type InsertAiRole = typeof aiRoles.$inferInsert;

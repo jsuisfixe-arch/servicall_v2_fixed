@@ -5,7 +5,7 @@
  */
 
 import { ActionHandler, ActionResult, ExecutionContext, ActionConfig } from "../../types";
-import { Logger } from "../../utils/Logger";
+import { Logger } from "../../infrastructure/logger";
 import { z } from "zod";
 import path from "path";
 

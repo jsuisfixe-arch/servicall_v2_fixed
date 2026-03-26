@@ -13,7 +13,8 @@ export interface Alert {
 }
 
 export class AlertingService {
-  private static adminEmail = process.env['ADMIN_ALERT_EMAIL'] || "admin@servicall.local";
+  // ✅ BLOC 1: Fallback codé en dur supprimé — ADMIN_ALERT_EMAIL requis
+  private static adminEmail = process.env['ADMIN_ALERT_EMAIL'] ?? null;
 
   /**
    * Envoie une alerte proactive

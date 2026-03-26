@@ -6,9 +6,9 @@
 
 import { z } from "zod";
 import type { ActionHandler, ActionResult, ProspectData } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
+import type { FinalExecutionContext } from "../structured-types";
 import { createProspect } from "../../../db";
-import { Logger } from "../../utils/Logger";
+import { Logger } from "../../infrastructure/logger";
 import { IdempotencyService } from "../../utils/IdempotencyService";
 
 // Configuration structurée

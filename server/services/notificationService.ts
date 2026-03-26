@@ -2,9 +2,11 @@ import * as twilioService from "./twilioService";
 import axios from "axios";
 import { logger } from "../infrastructure/logger";
 import { ResilienceService } from "./resilienceService";
+import { addJob } from "./queueService";
 
 /**
  * Notification Service - Envoi de confirmations par SMS et Email avec Résilience
+ * ✅ BLOC 2: Envoi d'email asynchrone via BullMQ
  */
 
 /**
@@ -46,7 +48,7 @@ export async function sendAppointmentSMS(
 }
 
 /**
- * Send appointment confirmation via Email (SendGrid)
+ * Send appointment confirmation via Email (Asynchrone via BullMQ)
  */
 export async function sendAppointmentEmail(
   email: string,
@@ -56,84 +58,84 @@ export async function sendAppointmentEmail(
     endTime: Date;
     description?: string;
     location?: string;
-  }
+  },
+  tenantId?: number
 ): Promise<boolean> {
-  const apiKey = process.env['SENDGRID_API_KEY'];
-  if (!apiKey) {
-    logger.warn("[Notification Service] SendGrid API Key missing");
-    return false;
-  }
-
-  const dateStr = appointment.startTime.toLocaleString("fr-FR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  const data = {
-    personalizations: [{ to: [{ email }] }],
-    from: { email: process.env['FROM_EMAIL'] || "no-reply@servicall.local", name: "Servicall CRM" },
-    subject: `Confirmation de rendez-vous : ${appointment.title}`,
-    content: [
-      {
-        type: "text/html",
-        value: `
-          <div style="font-family: sans-serif; padding: 20px; color: #333;">
-            <h2>Confirmation de votre rendez-vous</h2>
-            <p>Bonjour,</p>
-            <p>Votre rendez-vous a été programmé avec succès :</p>
-            <ul>
-              <li><strong>Sujet :</strong> ${appointment.title}</li>
-              <li><strong>Date :</strong> ${dateStr}</li>
-              ${appointment.location ? `<li><strong>Lieu :</strong> ${appointment.location}</li>` : ""}
-            </ul>
-            ${appointment.description ? `<p><strong>Notes :</strong> ${appointment.description}</p>` : ""}
-            <p>Merci de votre confiance,</p>
-            <p>L'équipe Servicall</p>
-          </div>
-        `,
-      },
-    ],
-  };
-
-  if (process.env['MOCK_NOTIFICATIONS'] === "true") {
-    logger.info(`[MOCK][EMAIL] To: ${email}, Subject: ${data.subject}`);
-    return true;
-  }
-
   try {
-    await ResilienceService.execute(
-      async () => {
-        await axios.post("https://api.sendgrid.com/v3/mail/send", data, {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-        });
-      },
-      {
-        name: "SENDGRID_EMAIL_SEND",
-        module: "SYSTEM",
-        idempotencyKey: `email_${email}_${appointment.startTime.getTime()}`
+    // ✅ AXE 3: Utilisation de la queue pour l'envoi d'email
+    await addJob("email-campaigns", {
+      type: "appointment-confirmation",
+      to: email,
+      tenantId,
+      appointment: {
+        ...appointment,
+        startTime: appointment.startTime.toISOString(),
+        endTime: appointment.endTime.toISOString(),
       }
-    );
+    });
+
+    logger.info(`[Notification Service] Email queued for ${email}`);
     return true;
   } catch (error: any) {
-    logger.error("[Notification Service] Error sending Email", error, { module: "SYSTEM" });
+    logger.error("[Notification Service] Failed to queue Email", error);
     return false;
   }
 }
 
 /**
- * Alias générique pour l'envoi d'email (pour compatibilité future)
+ * Implémentation réelle de l'envoi SendGrid (appelée par le Worker)
  */
-export async function sendEmail(params: { to: string, subject: string, text: string, html?: string, tenantId?: number }): Promise<void> {
-  await sendAppointmentEmail(params.to, {
-    title: params.subject,
-    startTime: new Date(),
-    endTime: new Date(),
-    description: params.text
+export async function sendEmailInternal(params: {
+  to: string;
+  subject: string;
+  html: string;
+  idempotencyKey?: string;
+}): Promise<void> {
+  const apiKey = process.env['SENDGRID_API_KEY'];
+  if (!apiKey) {
+    logger.warn("[Notification Service] SendGrid API Key missing");
+    return;
+  }
+
+  const data = {
+    personalizations: [{ to: [{ email: params.to }] }],
+    from: { email: process.env['FROM_EMAIL'] || "no-reply@servicall.local", name: "Servicall CRM" },
+    subject: params.subject,
+    content: [{ type: "text/html", value: params.html }],
+  };
+
+  await ResilienceService.execute(
+    async () => {
+      await axios.post("https://api.sendgrid.com/v3/mail/send", data, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+      });
+    },
+    {
+      name: "SENDGRID_EMAIL_SEND",
+      module: "SYSTEM",
+      idempotencyKey: params.idempotencyKey
+    }
+  );
+}
+
+/**
+ * Alias générique pour l'envoi d'email (Asynchrone)
+ */
+export async function sendEmail(params: { 
+  to: string, 
+  subject: string, 
+  text: string, 
+  html?: string, 
+  tenantId?: number 
+}): Promise<void> {
+  await addJob("email-campaigns", {
+    to: params.to,
+    subject: params.subject,
+    text: params.text,
+    html: params.html,
+    tenantId: params.tenantId
   });
 }

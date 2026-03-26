@@ -146,7 +146,6 @@ export function Softphone() {
     try {
       const currentTenantId = requireTenantId();
       await createCallMutation.mutateAsync({
-        tenantId: currentTenantId,
         toNumber: pendingCall.number,
         prospectId: pendingCall.prospectId,
         campaignId: pendingCall.campaignId,
@@ -166,12 +165,30 @@ export function Softphone() {
     setPendingCall(null);
   };
 
+  // Mutation pour mettre à jour l'appel (raccrochage)
+  const updateCallMutation = trpc.calls.update.useMutation();
+
   const handleHangup = async (callId: string) => {
     const call = calls.find((c) => c.id === callId);
     if (!call) return;
 
-    setCalls((prevCalls) => prevCalls.filter((c) => c.id !== callId));
-    toast.success(t('softphone.call_ended'));
+    try {
+      // Informer le backend du raccrochage
+      if (!isNaN(parseInt(callId))) {
+        await updateCallMutation.mutateAsync({
+          callId: parseInt(callId),
+          status: "completed",
+          duration: call.duration,
+        });
+      }
+      
+      setCalls((prevCalls) => prevCalls.filter((c) => c.id !== callId));
+      toast.success(t('softphone.call_ended'));
+    } catch (error) {
+      console.error("Hangup error:", error);
+      // On retire quand même l'appel de l'UI pour ne pas bloquer l'utilisateur
+      setCalls((prevCalls) => prevCalls.filter((c) => c.id !== callId));
+    }
   };
 
   const handleAddCall = () => {

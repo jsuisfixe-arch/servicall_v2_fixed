@@ -13,11 +13,10 @@ export const roiRouter = router({
    */
   getMetrics: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
       days: z.number().default(30),
     }))
     .query(async ({ input }) => {
-      return await ROIService.calculateTenantROI(input.tenantId, input.days);
+      return await ROIService.calculateTenantROI(ctx.tenantId, input.days);
     }),
 
   /**
@@ -25,7 +24,6 @@ export const roiRouter = router({
    */
   getOnboardingStatus: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
     }))
     .query(async () => {
       return [

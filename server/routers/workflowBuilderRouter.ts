@@ -1,11 +1,11 @@
 /**
  * workflowBuilderRouter - Stub router (TODO: implement)
  */
-import { router, protectedProcedure } from '../_core/trpc';
+import { router, publicProcedure } from '../_core/trpc';
 import { z } from 'zod';
 
 export const workflowBuilderRouter = router({
-  ping: protectedProcedure
+  ping: publicProcedure
     .input(z.object({}).optional())
     .query(async () => ({ status: 'ok' })),
 });

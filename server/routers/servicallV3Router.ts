@@ -12,7 +12,7 @@
  */
 import { z } from "zod";
 import { router } from "../_core/trpc";
-import { protectedProcedure } from "../procedures";
+import { tenantProcedure } from "../procedures";
 import { TRPCError } from "@trpc/server";
 import { getOpenAIClient } from "../_core/openaiClient";
 import { AI_MODEL } from "../_core/aiModels";
@@ -139,7 +139,7 @@ export const servicallV3Router = router({
    * Évalue : technique, communication, cohérence, honnêteté, motivation
    * Température : 0.3 (analyse technique précise)
    */
-  analyzeInterview: protectedProcedure
+  analyzeInterview: tenantProcedure
     .input(
       z.object({
         transcript: z.string().min(50, "Le transcript doit contenir au moins 50 caractères"),
@@ -194,7 +194,7 @@ export const servicallV3Router = router({
    * 3 points : profil global, point fort, risque/recommandation
    * Température : 0.7 (résumés synthétiques)
    */
-  generateSummary: protectedProcedure
+  generateSummary: tenantProcedure
     .input(
       z.object({
         transcript: z.string().min(50, "Le transcript doit contenir au moins 50 caractères"),
@@ -233,7 +233,7 @@ export const servicallV3Router = router({
    * Extrait nom/entreprise/coordonnées, détermine intent, urgence, transfert
    * Température : 0.3 (extraction précise)
    */
-  qualifyCall: protectedProcedure
+  qualifyCall: tenantProcedure
     .input(
       z.object({
         transcription: z.string().min(10, "La transcription doit contenir au moins 10 caractères"),
@@ -279,7 +279,7 @@ export const servicallV3Router = router({
    * Extraction automatisée : nom, email, téléphone, poste, expérience, compétences, formation
    * Température : 0.3 (extraction précise)
    */
-  parseDocument: protectedProcedure
+  parseDocument: tenantProcedure
     .input(
       z.object({
         content: z.string().min(30, "Le contenu doit contenir au moins 30 caractères"),
@@ -321,7 +321,7 @@ export const servicallV3Router = router({
    * Analyse complète combinée (entretien + résumé en un seul appel)
    * Optimisé pour réduire la latence
    */
-  fullAnalysis: protectedProcedure
+  fullAnalysis: tenantProcedure
     .input(
       z.object({
         transcript: z.string().min(50),

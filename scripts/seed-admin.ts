@@ -17,7 +17,7 @@ export async function seedAdmin() {
     const existingAdmin = await sql`SELECT id FROM users WHERE email = ${email}`;
     if (existingAdmin.length > 0) {
       console.log('Admin account already exists. Skipping creation.');
-      process.exit(0);
+      return; // ✅ FIX: return au lieu de process.exit(0)
     }
 
     // Création de l'admin
@@ -82,11 +82,12 @@ export async function seedAdmin() {
     `;
 
     console.log('Default tenant and user-tenant link created successfully.');
-    process.exit(0);
+    // ✅ FIX: return au lieu de process.exit(0)
   } catch (error: any) {
     console.error('Error seeding admin account and default tenant:', error);
-    process.exit(1);
+    throw error; // ✅ FIX: throw au lieu de process.exit(1)
   }
 }
 
-seedAdmin();
+// ✅ FIX: Ne pas appeler seedAdmin() automatiquement lors de l'import
+// seedAdmin(); // Supprimé pour éviter process.exit lors de l'import par le serveur

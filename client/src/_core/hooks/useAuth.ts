@@ -24,7 +24,7 @@ export function useAuth(options?: UseAuthOptions) {
     // ✅ CORRECTION: Retry réduit pour affichage plus rapide (1 seule tentative)
     retry: (failureCount, error: unknown) => {
       // Ne pas retry les erreurs d'authentification (401 Unauthorized)
-      if (error instanceof TRPCClientError && (error as any).data?.code === "UNAUTHORIZED") {
+      if (error instanceof TRPCClientError && error.data?.code === "UNAUTHORIZED") {
         return false;
       }
       // Retry max 1 fois pour les erreurs réseau

@@ -1,3 +1,10 @@
+/**
+ * ✅ BLOC 1 CORRIGÉ: Identifiants codés en dur supprimés.
+ * Utiliser les variables d'environnement :
+ *   ADMIN_EMAIL     (requis)
+ *   ADMIN_PASSWORD  (requis, min 12 caractères)
+ *   ADMIN_NAME      (optionnel)
+ */
 import { getDb } from "../db";
 import { hashPassword } from "../services/passwordService";
 import { logger } from "../infrastructure/logger";
@@ -5,29 +12,40 @@ import { nanoid } from "nanoid";
 import { users, tenants, tenantUsers } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 
+// ✅ BLOC 1: Identifiants depuis les variables d'environnement uniquement
+const adminEmail = process.env['ADMIN_EMAIL'];
+const adminPassword = process.env['ADMIN_PASSWORD'];
+const adminName = process.env['ADMIN_NAME'] ?? "Administrateur Système";
+
+if (!adminEmail || !adminPassword) {
+  logger.error("[InitAdminForced] ❌ ADMIN_EMAIL et ADMIN_PASSWORD sont requis dans les variables d'environnement.");
+  process.exit(1);
+}
+
+if (adminPassword.length < 12) {
+  logger.error("[InitAdminForced] ❌ ADMIN_PASSWORD doit contenir au moins 12 caractères.");
+  process.exit(1);
+}
+
 async function main() {
   try {
     logger.info("[InitAdminForced] Démarrage...");
     const db = await getDb();
     if (!db) throw new Error("Database not available");
 
-    const email = "admin@servicall.com";
-    const password = "admin123password";
-    const name = "Administrateur Système";
-
     // Vérifier si l'utilisateur existe
-    const existingUser = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    const existingUser = await db.select().from(users).where(eq(users.email, adminEmail!)).limit(1);
     
     let adminId: number;
 
     if (existingUser.length === 0) {
-      const passwordHash = await hashPassword(password);
+      const passwordHash = await hashPassword(adminPassword!);
       const openId = nanoid();
       
       const [newAdmin] = await db.insert(users).values({
         openId,
-        email,
-        name,
+        email: adminEmail!,
+        name: adminName,
         passwordHash,
         loginMethod: "password",
         role: "admin",

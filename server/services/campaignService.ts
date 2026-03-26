@@ -107,16 +107,13 @@ export class CampaignService {
       return [];
     }
 
-    // Insertion avec gestion des doublons (colonnes réelles en DB : campaign_id, prospect_id, status, metadata)
+    // Insertion avec gestion des doublons (colonnes réelles en DB : campaign_id, prospect_id, phone_number, name, status)
     const values = withPhone.map(p => ({
       campaignId,
       prospectId: p.id,
+      phoneNumber: p.phone!,
+      name: `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Inconnu",
       status: "pending" as const,
-      metadata: {
-        phone: p.phone,
-        name: `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() || "Inconnu",
-        addedAt: new Date().toISOString(),
-      },
     }));
 
     const inserted = await db

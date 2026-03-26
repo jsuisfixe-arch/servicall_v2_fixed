@@ -10,7 +10,12 @@ import { eq, and } from "drizzle-orm";
 import { logger } from "../infrastructure/logger";
 
 
-const ENCRYPTION_KEY = process.env['ENCRYPTION_KEY'] || "default-key-change-in-production";
+// ✅ BLOC 1: Fallback de clé de chiffrement supprimé — ENCRYPTION_KEY requis
+const _byokEncKey = process.env['ENCRYPTION_KEY'];
+if (!_byokEncKey) {
+  throw new Error('[BYOKService] ENCRYPTION_KEY est requis dans les variables d\'environnement.');
+}
+const ENCRYPTION_KEY = _byokEncKey;
 const ALGORITHM = "aes-256-cbc";
 
 /**

@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { router } from "../_core/trpc";
-import { protectedProcedure, tenantProcedure } from "../procedures";
+import { tenantProcedure } from "../procedures";
 import * as db from "../db";
 import { TRPCError } from "@trpc/server";
 import { logger } from "../infrastructure/logger";
@@ -15,7 +15,7 @@ export const softphoneRouter = router({
    * BLOC 3: Vérifie la configuration Twilio
    * Permet au frontend de savoir si la téléphonie est disponible
    */
-  checkTwilioConfig: protectedProcedure.query(async ({ ctx }) => {
+  checkTwilioConfig: tenantProcedure.query(async ({ ctx }) => {
     try {
       logger.info("[Softphone] Checking Twilio configuration", {
         userId: ctx.user.id,
@@ -69,7 +69,7 @@ export const softphoneRouter = router({
    * Récupère les informations d'un prospect pour un appel
    * BLOC 2: Timeout 10s, gestion NOT_FOUND
    */
-  getProspectForCall: protectedProcedure
+  getProspectForCall: tenantProcedure
     .input(z.object({ prospectId: z.number() }))
     .query(async ({ input, ctx }) => {
       const startTime = Date.now();

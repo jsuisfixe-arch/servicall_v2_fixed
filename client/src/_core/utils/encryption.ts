@@ -1,7 +1,15 @@
 import nacl from 'tweetnacl';
 import { decodeUTF8, encodeUTF8, encodeBase64, decodeBase64 } from 'tweetnacl-util';
 
-const ENCRYPTION_KEY = ((import.meta as any).env['VITE_ENCRYPTION_KEY'] as string | undefined) || 'default-secret-key-32-chars-long-!!';
+interface ImportMetaEnv {
+  readonly VITE_ENCRYPTION_KEY: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
+const ENCRYPTION_KEY = (import.meta as unknown as ImportMeta).env.VITE_ENCRYPTION_KEY || 'default-secret-key-32-chars-long-!!';
 
 // Ensure key is 32 bytes
 const getUint8Key = (key: string) => {

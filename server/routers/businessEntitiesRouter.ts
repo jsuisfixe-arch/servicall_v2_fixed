@@ -5,7 +5,7 @@
  */
 
 import { z } from "zod";
-import { protectedProcedure, router } from "../procedures";
+import { tenantProcedure, router } from "../procedures";
 import {
   createBusinessEntitySchema,
   updateBusinessEntitySchema,
@@ -31,7 +31,7 @@ export const businessEntitiesRouter = router({
    * Liste toutes les entités du tenant
    * GET /api/business-entities/list
    */
-  list: protectedProcedure.query(async ({ ctx }) => {
+  list: tenantProcedure.query(async ({ ctx }) => {
     try {
       const tenantId = ctx.tenantId;
       if (!tenantId) {
@@ -65,7 +65,7 @@ export const businessEntitiesRouter = router({
    * Recherche d'entités avec filtres
    * POST /api/business-entities/search
    */
-  search: protectedProcedure
+  search: tenantProcedure
     .input(searchBusinessEntitiesSchema)
     .query(async ({ ctx, input }) => {
       try {
@@ -107,7 +107,7 @@ export const businessEntitiesRouter = router({
    * Récupère une entité par ID
    * GET /api/business-entities/:id
    */
-  getById: protectedProcedure
+  getById: tenantProcedure
     .input(z.object({ id: idSchema }))
     .query(async ({ ctx, input }) => {
       try {
@@ -151,7 +151,7 @@ export const businessEntitiesRouter = router({
    * Crée une nouvelle entité
    * POST /api/business-entities/create
    */
-  create: protectedProcedure
+  create: tenantProcedure
     .input(createBusinessEntitySchema)
     .mutation(async ({ ctx, input }) => {
       try {
@@ -197,7 +197,7 @@ export const businessEntitiesRouter = router({
    * Met à jour une entité existante
    * PUT /api/business-entities/:id
    */
-  update: protectedProcedure
+  update: tenantProcedure
     .input(updateBusinessEntitySchema)
     .mutation(async ({ ctx, input }) => {
       try {
@@ -239,7 +239,7 @@ export const businessEntitiesRouter = router({
    * Supprime une entité
    * DELETE /api/business-entities/:id
    */
-  delete: protectedProcedure
+  delete: tenantProcedure
     .input(z.object({ id: idSchema }))
     .mutation(async ({ ctx, input }) => {
       try {
@@ -275,7 +275,7 @@ export const businessEntitiesRouter = router({
    * Récupère les entités disponibles (isActive = true)
    * GET /api/business-entities/available
    */
-  getAvailable: protectedProcedure
+  getAvailable: tenantProcedure
     .input(z.object({ type: z.enum(["product", "service", "property", "room", "appointment", "menu_item", "other"]).optional() }))
     .query(async ({ ctx, input }) => {
       try {

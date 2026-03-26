@@ -56,26 +56,7 @@ export const AuthService = {
       return null;
     }
 
-    // Mode développement sans base de données
-    if (process.env["DB_ENABLED"] === "false") {
-      const mockUser: AuthenticatedUser = {
-        id: 1,
-        openId: session.openId,
-        email: "admin@servicall.com",
-        name: session.name || "Demo User",
-        role: "admin",
-        passwordHash: "mock-hash",
-        loginMethod: "mock-login",
-        lastSignedIn: new Date(),
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        tenantId: 1,
-        // ✅ FIX TS2741: Champ requis par le schéma User (assignedAgentType)
-        assignedAgentType: "AI",
-      };
-      return { user: mockUser, tenantId: mockUser.tenantId };
-    }
+    // ✅ BLOC 1: Mode démo supprimé — authentification toujours via la vraie DB
 
     // Résolution de l'utilisateur depuis le JWT (openId) via la DB uniquement
     const user = await db.getUserByOpenId(session.openId);

@@ -14,7 +14,6 @@ export const copilotRouter = router({
    */
   getSuggestions: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
       transcription: z.string(),
       context: z.object({
         prospectName: z.string().optional(),
@@ -34,7 +33,6 @@ export const copilotRouter = router({
    */
   extractData: tenantProcedure
     .input(z.object({
-      tenantId: z.number(),
       transcription: z.string(),
     }))
     .mutation(async ({ input }) => {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../procedures";
+import { router, tenantProcedure } from "../procedures";
 import { CallScoringService } from "../services/callScoringService";
 import { addJob } from "../services/queueService";
 import { TRPCError } from "@trpc/server";
@@ -8,13 +8,14 @@ import { logger } from "../infrastructure/logger";
 /**
  * Router pour le scoring des appels
  * ✅ AXE 3: Scoring 100% asynchrone via BullMQ
+ * ✅ BLOC 1: Toutes les procédures utilisent tenantProcedure — ctx.tenantId garanti non-null
  */
 
 export const callScoringRouter = router({
   /**
    * Score un appel spécifique (Asynchrone)
    */
-  scoreCall: protectedProcedure
+  scoreCall: tenantProcedure
     .input(
       z.object({
         callId: z.number().int().positive(),
@@ -56,6 +57,7 @@ export const callScoringRouter = router({
         });
       }
 
+      // ✅ BLOC 1: Vérification d'isolation tenant — ctx.tenantId garanti par tenantProcedure
       if (call.tenantId !== ctx.tenantId) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -71,7 +73,7 @@ export const callScoringRouter = router({
           timestamp: new Date()
         });
         
-        logger.info("[CallScoringRouter] Scoring job queued", { callId, tenantId: ctx.tenantId ?? undefined });
+        logger.info("[CallScoringRouter] Scoring job queued", { callId, tenantId: ctx.tenantId });
       } catch (error: any) {
         logger.error("[CallScoringRouter] Failed to queue scoring job", { error, callId });
         throw new TRPCError({
@@ -90,7 +92,7 @@ export const callScoringRouter = router({
   /**
    * Récupère le score d'un appel
    */
-  getScore: protectedProcedure
+  getScore: tenantProcedure
     .input(
       z.object({
         callId: z.number().int().positive(),
@@ -110,8 +112,9 @@ export const callScoringRouter = router({
 
   /**
    * Liste tous les scores pour le tenant courant
+   * ✅ BLOC 1: tenantProcedure garantit ctx.tenantId non-null — vérification manuelle supprimée
    */
-  listScores: protectedProcedure
+  listScores: tenantProcedure
     .input(
       z.object({
         limit: z.number().int().positive().max(100).default(50),
@@ -120,26 +123,15 @@ export const callScoringRouter = router({
     )
     .query(async ({ input, ctx }) => {
       const { limit, offset } = input;
-      if (!ctx.tenantId) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Tenant ID is required",
-        });
-      }
       const scores = await CallScoringService.listScores(ctx.tenantId, limit, offset);
       return { scores, total: scores.length };
     }),
 
   /**
    * Récupère le score moyen pour le tenant
+   * ✅ BLOC 1: tenantProcedure garantit ctx.tenantId non-null — vérification manuelle supprimée
    */
-  getAverageScore: protectedProcedure.query(async ({ ctx }) => {
-    if (!ctx.tenantId) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "Tenant ID is required",
-      });
-    }
+  getAverageScore: tenantProcedure.query(async ({ ctx }) => {
     const averageScore = await CallScoringService.getAverageScore(ctx.tenantId);
     return { averageScore, tenantId: ctx.tenantId };
   }),

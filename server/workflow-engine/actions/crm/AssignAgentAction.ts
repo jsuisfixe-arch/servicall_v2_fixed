@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
-import { Logger } from "../../utils/Logger";
+import type { FinalExecutionContext } from "../structured-types";
+import { Logger } from "../../infrastructure/logger";
 
 const AssignAgentConfigSchema = z.object({
   agentId: z.union([z.string(), z.number()]).optional(),

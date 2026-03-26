@@ -5,11 +5,11 @@
 
 import { z } from "zod";
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
+import type { FinalExecutionContext } from "../structured-types";
 import { calculateLeadScore } from "../../../services/scoringService";
 import { updateProspect, getDb, prospects } from "../../../db";
 import { eq } from "drizzle-orm";
-import { Logger } from "../../utils/Logger";
+import { Logger } from "../../infrastructure/logger";
 
 // Configuration structurée
 const AIScoreConfigSchema = z.object({

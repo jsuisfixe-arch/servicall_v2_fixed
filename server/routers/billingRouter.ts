@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { router, tenantProcedure, adminProcedure } from "../_core/trpc";
+import { router, tenantProcedure } from "../_core/trpc";
+import { adminProcedure } from "../procedures";
 import { TRPCError } from "@trpc/server";
 import * as db from "../db";
 import { logger } from "../infrastructure/logger";
@@ -14,14 +15,14 @@ export const billingRouter = router({
   /**
    * Récupère l'abonnement actuel du tenant
    */
+  // ✅ BLOC 1: tenantId supprimé du schéma — ctx.tenantId utilisé
   getSubscription: tenantProcedure
-    .input(z.object({ tenantId: z.number() }))
     .output(z.object({ subscription: subscriptionSchema.nullable() }))
     .query(async ({ ctx }) => {
       try {
         // BUG-R3 FIX: ctx.tenantId est garanti non-null par tenantProcedure.
-        // Le fallback ?? input.tenantId était dangereux : un client pourrait injecter un tenantId arbitraire.
-        const tenantIdToUse = ctx.tenantId!;
+        // Le fallback ?? ctx.tenantId était dangereux : un client pourrait injecter un tenantId arbitraire.
+        const tenantIdToUse = ctx.tenantId;
         const subscription = await db.getSubscriptionByTenant(tenantIdToUse);
         return { subscription: subscription ? subscriptionSchema.parse(subscription) : null };
       } catch (error: any) {
@@ -33,13 +34,13 @@ export const billingRouter = router({
   /**
    * Récupère les factures du tenant
    */
+  // ✅ BLOC 1: tenantId supprimé du schéma — ctx.tenantId utilisé
   getInvoices: tenantProcedure
-    .input(z.object({ tenantId: z.number() }))
     .output(z.object({ invoices: z.array(invoiceSchema) }))
     .query(async ({ ctx }) => {
       try {
         // BUG-R3 FIX: ctx.tenantId est garanti non-null par tenantProcedure.
-        const tenantIdToUse = ctx.tenantId!;
+        const tenantIdToUse = ctx.tenantId;
         const invoices = await db.getInvoicesByTenant(tenantIdToUse);
         return { invoices: z.array(invoiceSchema).parse(invoices) };
       } catch (error: any) {

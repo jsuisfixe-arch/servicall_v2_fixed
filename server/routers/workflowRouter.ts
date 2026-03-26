@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router } from "../_core/trpc";
-import { adminProcedure, managerProcedure, tenantProcedure } from "../_core/trpc";
+import { adminProcedure, managerProcedure, tenantProcedure } from "../procedures";
 import {
   getWorkflowExecutionHistory,
   getTenantWorkflowExecutionHistory,

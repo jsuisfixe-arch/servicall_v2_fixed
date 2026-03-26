@@ -6,7 +6,7 @@
 import { router } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure } from "../procedures";
+import { tenantProcedure } from "../procedures";
 import { logger } from "../infrastructure/logger";
 import * as tenantIndustryService from "../services/tenantIndustryService";
 import * as tenantAiKeyService from "../services/tenantAiKeyService";
@@ -15,9 +15,9 @@ import { AuditService } from "../services/auditService";
 export const industryConfigRouter = router({
   /**
    * Récupère le catalogue complet des métiers
-   * ✅ CORRECTION: Utilise protectedProcedure car le catalogue est global
+   * ✅ CORRECTION: Utilise tenantProcedure car le catalogue est global
    */
-  getCatalog: protectedProcedure.query(async () => {
+  getCatalog: tenantProcedure.query(async () => {
     try {
       const industries = tenantIndustryService.getIndustriesCatalog();
       return {
@@ -35,9 +35,9 @@ export const industryConfigRouter = router({
 
   /**
    * Récupère les métiers groupés par catégorie
-   * ✅ CORRECTION: Utilise protectedProcedure car les métiers sont globaux
+   * ✅ CORRECTION: Utilise tenantProcedure car les métiers sont globaux
    */
-  getIndustriesByCategory: protectedProcedure.query(async () => {
+  getIndustriesByCategory: tenantProcedure.query(async () => {
     try {
       const industries = tenantIndustryService.getIndustriesByCategory();
       return {
@@ -55,9 +55,9 @@ export const industryConfigRouter = router({
 
   /**
    * Récupère les détails d'un métier spécifique
-   * ✅ CORRECTION: Utilise protectedProcedure car les détails sont globaux
+   * ✅ CORRECTION: Utilise tenantProcedure car les détails sont globaux
    */
-  getIndustryDetails: protectedProcedure
+  getIndustryDetails: tenantProcedure
     .input(z.object({ industryId: z.string() }))
     .query(async ({ input }) => {
       try {
@@ -77,9 +77,9 @@ export const industryConfigRouter = router({
 
   /**
    * Récupère la configuration métier du tenant actuel
-   * ✅ CORRECTION: Utilise protectedProcedure et récupère tenantId du contexte
+   * ✅ CORRECTION: Utilise tenantProcedure et récupère tenantId du contexte
    */
-  getCurrentConfig: protectedProcedure.query(async ({ ctx }) => {
+  getCurrentConfig: tenantProcedure.query(async ({ ctx }) => {
     try {
       // ✅ BLOC 1: Récupérer le tenantId depuis le contexte (validation stricte)
       const tenantId = ctx.tenantId;
@@ -105,12 +105,11 @@ export const industryConfigRouter = router({
 
   /**
    * Définit la configuration métier du tenant
-   * ✅ CORRECTION: Utilise protectedProcedure avec input tenantId optionnel
+   * ✅ CORRECTION: Utilise tenantProcedure avec input tenantId optionnel
    */
-  setConfig: protectedProcedure
+  setConfig: tenantProcedure
     .input(
       z.object({
-        tenantId: z.number().optional(),
         industryId: z.string(),
         enabledCapabilities: z.array(z.string()).optional(),
         enabledWorkflows: z.array(z.string()).optional(),
@@ -119,7 +118,7 @@ export const industryConfigRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         // ✅ BLOC 1: Récupérer le tenantId (validation stricte)
-        const tenantId = input.tenantId || ctx.tenantId;
+        const tenantId = ctx.tenantId;
         if (!tenantId) {
           throw new TRPCError({
             code: "UNAUTHORIZED",
@@ -133,12 +132,6 @@ export const industryConfigRouter = router({
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Accès réservé aux managers et administrateurs",
-          });
-        }
-        if (input.tenantId && input.tenantId !== ctx.tenantId) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Accès refusé : vous ne pouvez pas modifier la configuration d'un autre tenant",
           });
         }
         
@@ -170,9 +163,9 @@ export const industryConfigRouter = router({
 
   /**
    * Récupère les workflows standards d'un métier
-   * ✅ CORRECTION: Utilise protectedProcedure car les workflows sont globaux
+   * ✅ CORRECTION: Utilise tenantProcedure car les workflows sont globaux
    */
-  getIndustryWorkflows: protectedProcedure
+  getIndustryWorkflows: tenantProcedure
     .input(z.object({ industryId: z.string() }))
     .query(async ({ input }) => {
       try {
@@ -192,9 +185,9 @@ export const industryConfigRouter = router({
 
   /**
    * Récupère les capacités d'un métier
-   * ✅ CORRECTION: Utilise protectedProcedure car les capacités sont globales
+   * ✅ CORRECTION: Utilise tenantProcedure car les capacités sont globales
    */
-  getIndustryCapabilities: protectedProcedure
+  getIndustryCapabilities: tenantProcedure
     .input(z.object({ industryId: z.string() }))
     .query(async ({ input }) => {
       try {
@@ -218,19 +211,18 @@ export const industryConfigRouter = router({
 
   /**
    * Sauvegarde la clé OpenAI du tenant
-   * ✅ CORRECTION: Utilise protectedProcedure avec tenantId optionnel
+   * ✅ CORRECTION: Utilise tenantProcedure avec tenantId optionnel
    */
-  saveOpenAiKey: protectedProcedure
+  saveOpenAiKey: tenantProcedure
     .input(
       z.object({
-        tenantId: z.number().optional(),
         apiKey: z.string().min(1, "La clé API ne peut pas être vide"),
       })
     )
     .mutation(async ({ ctx, input }) => {
       try {
         // ✅ BLOC 1: Récupérer le tenantId (validation stricte)
-        const tenantId = input.tenantId || ctx.tenantId;
+        const tenantId = ctx.tenantId;
         if (!tenantId) {
           throw new TRPCError({
             code: "UNAUTHORIZED",
@@ -244,12 +236,6 @@ export const industryConfigRouter = router({
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Accès réservé aux managers et administrateurs",
-          });
-        }
-        if (input.tenantId && input.tenantId !== ctx.tenantId) {
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: "Accès refusé : vous ne pouvez pas modifier la clé d'un autre tenant",
           });
         }
         
@@ -304,9 +290,9 @@ export const industryConfigRouter = router({
 
   /**
    * Vérifie si le tenant a une clé OpenAI configurée
-   * ✅ CORRECTION: Utilise protectedProcedure et récupère tenantId du contexte
+   * ✅ CORRECTION: Utilise tenantProcedure et récupère tenantId du contexte
    */
-  hasOpenAiKey: protectedProcedure.query(async ({ ctx }) => {
+  hasOpenAiKey: tenantProcedure.query(async ({ ctx }) => {
     try {
       // ✅ BLOC 1: Récupérer le tenantId (validation stricte)
       const tenantId = ctx.tenantId;
@@ -332,14 +318,14 @@ export const industryConfigRouter = router({
 
   /**
    * Supprime la clé OpenAI du tenant
-   * ✅ CORRECTION: Utilise protectedProcedure avec tenantId optionnel
+   * ✅ CORRECTION: Utilise tenantProcedure avec tenantId optionnel
    */
-  deleteOpenAiKey: protectedProcedure
-    .input(z.object({ tenantId: z.number().optional() }).optional())
+  deleteOpenAiKey: tenantProcedure
+    .input(z.object({}).optional())
     .mutation(async ({ ctx, input }) => {
     try {
       // ✅ BLOC 1: Récupérer le tenantId (validation stricte)
-      const tenantId = input?.tenantId || ctx.tenantId;
+      const tenantId = ctx.tenantId;
       if (!tenantId) {
         throw new TRPCError({
           code: "UNAUTHORIZED",
@@ -355,7 +341,7 @@ export const industryConfigRouter = router({
             message: "Accès réservé aux managers et administrateurs",
           });
         }
-        if (input?.tenantId && input.tenantId !== ctx.tenantId) {
+        if (input?.tenantId && ctx.tenantId !== ctx.tenantId) {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Accès refusé : vous ne pouvez pas supprimer la clé d'un autre tenant",
@@ -394,9 +380,9 @@ export const industryConfigRouter = router({
 
   /**
    * Teste la clé OpenAI
-   * ✅ CORRECTION: Utilise protectedProcedure
+   * ✅ CORRECTION: Utilise tenantProcedure
    */
-  testOpenAiKey: protectedProcedure
+  testOpenAiKey: tenantProcedure
     .input(z.object({ apiKey: z.string() }))
     .mutation(async ({ ctx, input }) => {
       try {

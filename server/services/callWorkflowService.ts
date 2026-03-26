@@ -83,7 +83,7 @@ export async function processCompletedCall(
       sentiment: analysis.sentiment,
     });
 
-    // 7. Update Prospect Notes if applicable
+    // 7. Update Prospect Notes and Campaign Status if applicable
     if (call.prospectId) {
       const prospect = await db.getProspectById(call.prospectId);
       if (prospect) {
@@ -92,6 +92,31 @@ export async function processCompletedCall(
           notes: updatedNotes,
           status: "contacted",
         });
+
+        // ✅ Synchronisation avec les campagnes en cours
+        if (call.campaignId) {
+          const { campaignProspects } = await import("../../drizzle/schema-campaigns");
+          const { eq, and } = await import("drizzle-orm");
+          const database = await db.getDb();
+          await database
+            .update(campaignProspects)
+            .set({ 
+              status: "completed", 
+              completedAt: new Date(),
+              notes: `Appel réussi. Résumé: ${summary.substring(0, 200)}...`
+            })
+            .where(
+              and(
+                eq(campaignProspects.campaignId, call.campaignId),
+                eq(campaignProspects.prospectId, call.prospectId)
+              )
+            );
+          logger.info(`[Call Workflow] Campaign prospect updated to completed`, { 
+            callId, 
+            campaignId: call.campaignId, 
+            prospectId: call.prospectId 
+          });
+        }
       }
     }
 

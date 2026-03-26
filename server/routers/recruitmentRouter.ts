@@ -1,9 +1,10 @@
 import { z } from "zod";
-import { router, tenantProcedure, managerProcedure } from "../_core/trpc";
+import { router, tenantProcedure } from "../_core/trpc";
+import { managerProcedure } from "../procedures";
 import { TRPCError } from "@trpc/server";
 import * as db from "../db";
 import { candidateInterviews, recruitmentSettings, interviewQuestions } from "../../drizzle/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { logger } from "../infrastructure/logger";
 import { paginationInput, paginate } from "../_core/pagination";
 import { 
@@ -37,7 +38,7 @@ export const recruitmentRouter = router({
             .limit(limit)
             .offset(offset)
             .orderBy(desc(candidateInterviews.createdAt)),
-          db.db.select({ value: db.count() })
+          db.db.select({ value: sql`count(*)` })
             .from(candidateInterviews)
             .where(and(...conditions))
         ]);

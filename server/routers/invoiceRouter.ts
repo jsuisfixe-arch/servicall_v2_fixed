@@ -1,3 +1,12 @@
+/**
+ * FIX CRIT-6: invoiceRouter — callId cross-tenant
+ *   Avant: La création d'une facture avec un callId n'était JAMAIS vérifiée.
+ *          Un tenant A pouvait lier une facture à un appel du tenant B.
+ *          De plus, la vérification était faite APRÈS la création de la facture (race condition).
+ *   Après: Vérification du callId.tenantId === ctx.tenantId AVANT la création,
+ *          directement via la table `calls` (Drizzle ORM, paramétré).
+ */
+
 import { z } from "zod";
 import { router, publicProcedure } from "../_core/trpc";
 import { InvoiceService } from "../services/invoiceService";
@@ -7,8 +16,8 @@ import { logger } from "../infrastructure/logger";
 import { tenantProcedure, adminProcedure } from "../procedures";
 import { paginationInput, paginate } from "../_core/pagination";
 import * as db from "../db";
-import { count, eq } from "drizzle-orm";
-import { customerInvoices } from "../../drizzle/schema";
+import { count, eq, and } from "drizzle-orm";
+import { customerInvoices, calls } from "../../drizzle/schema";
 
 /**
  * Router pour la gestion des factures clients
@@ -39,10 +48,38 @@ export const invoiceRouter = router({
             message: "Tenant ID is required",
           });
         }
+
+        // FIX CRIT-6: Vérification AVANT création — table `calls` directement (Drizzle ORM)
+        // Avant: vérification absente, puis faite APRÈS création via une méthode inexistante
+        // Après: vérification cross-tenant AVANT la création, via requête paramétrée
+        if (input.callId) {
+          const callRows = await db.db
+            .select({ id: calls.id, tenantId: calls.tenantId })
+            .from(calls)
+            .where(eq(calls.id, input.callId))
+            .limit(1);
+
+          const call = callRows[0];
+          if (!call) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Appel introuvable" });
+          }
+          if (call.tenantId !== ctx.tenantId) {
+            logger.warn("[InvoiceRouter] Cross-tenant callId access attempt blocked", {
+              callId: input.callId,
+              callTenantId: call.tenantId,
+              requestTenantId: ctx.tenantId,
+            });
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Accès refusé: cet appel n'appartient pas à votre organisation.",
+            });
+          }
+        }
+
         // Calcul dynamique HT -> TVA -> TTC
         const amountHT = input.amount;
         const taxAmount = (amountHT * input.taxRate) / 100;
-        
+
         const invoiceId = await InvoiceService.createInvoice({
           tenantId: ctx.tenantId,
           prospectId: input.prospectId,
@@ -62,6 +99,7 @@ export const invoiceRouter = router({
           });
         }
 
+        // Enregistrement post-création (tracking uniquement — callId déjà vérifié ci-dessus)
         if (input.callId) {
           await CallExecutionService.recordInvoiceCreated(input.callId);
         }
@@ -108,15 +146,14 @@ export const invoiceRouter = router({
       const data = await InvoiceService.listInvoices(ctx.tenantId, limit, offset);
       let total = data.length;
 
-      if (process.env['DB_ENABLED'] !== "false") {
-        try {
-          const totalResult = await db.db.select({ value: count() })
-            .from(customerInvoices)
-            .where(eq(customerInvoices.tenantId, ctx.tenantId));
-          total = totalResult[0]?.value ?? data.length;
-        } catch (_e) {
-          total = data.length;
-        }
+      // ✅ BLOC 1: DB_ENABLED guard supprimé
+      try {
+        const totalResult = await db.db.select({ value: count() })
+          .from(customerInvoices)
+          .where(eq(customerInvoices.tenantId, ctx.tenantId));
+        total = totalResult[0]?.value ?? data.length;
+      } catch (_e) {
+        total = data.length;
       }
 
       return paginate(data, total, input);

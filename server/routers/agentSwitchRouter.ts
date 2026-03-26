@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { router } from "../_core/trpc";
-import { adminProcedure, protectedProcedure } from "../procedures";
+import { adminProcedure, tenantProcedure } from "../procedures";
 import {
   forceHumanAgent,
   forceAIAgent,
@@ -13,6 +13,8 @@ import { TRPCError } from "@trpc/server";
 
 /**
  * Router pour la gestion de la bascule Agent IA ↔ Agent Humain
+ * ✅ BLOC 1: Toutes les procédures tenant-spécifiques utilisent tenantProcedure
+ * ✅ BLOC 1: tenantId retiré des schémas d'entrée — ctx.tenantId utilisé exclusivement
  */
 export const agentSwitchRouter = router({
   /**
@@ -22,7 +24,6 @@ export const agentSwitchRouter = router({
     .input(
       z.object({
         userId: z.number(),
-        tenantId: z.number(),
         reason: z.string().optional(),
         callId: z.number().optional(),
       })
@@ -31,7 +32,7 @@ export const agentSwitchRouter = router({
       try {
         await forceHumanAgent(
           input.userId,
-          input.tenantId,
+          ctx.tenantId,
           ctx.user.id,
           input.reason,
           input.callId
@@ -40,6 +41,7 @@ export const agentSwitchRouter = router({
         logger.info("[AgentSwitchRouter] Forced human agent", {
           userId: input.userId,
           triggeredBy: ctx.user.id,
+          tenantId: ctx.tenantId,
         });
 
         return {
@@ -63,7 +65,6 @@ export const agentSwitchRouter = router({
     .input(
       z.object({
         userId: z.number(),
-        tenantId: z.number(),
         reason: z.string().optional(),
         callId: z.number().optional(),
       })
@@ -72,7 +73,7 @@ export const agentSwitchRouter = router({
       try {
         await forceAIAgent(
           input.userId,
-          input.tenantId,
+          ctx.tenantId,
           ctx.user.id,
           input.reason,
           input.callId
@@ -81,6 +82,7 @@ export const agentSwitchRouter = router({
         logger.info("[AgentSwitchRouter] Forced AI agent", {
           userId: input.userId,
           triggeredBy: ctx.user.id,
+          tenantId: ctx.tenantId,
         });
 
         return {
@@ -100,7 +102,7 @@ export const agentSwitchRouter = router({
   /**
    * Récupère le type d'agent actuel d'un utilisateur
    */
-  getAgentType: protectedProcedure
+  getAgentType: tenantProcedure
     .input(
       z.object({
         userId: z.number(),
@@ -126,7 +128,7 @@ export const agentSwitchRouter = router({
   /**
    * Récupère l'historique des bascules pour un utilisateur
    */
-  getUserHistory: protectedProcedure
+  getUserHistory: tenantProcedure
     .input(
       z.object({
         userId: z.number(),
@@ -152,13 +154,14 @@ export const agentSwitchRouter = router({
 
   /**
    * Récupère la configuration actuelle de l'agent switch pour un tenant
+   * ✅ BLOC 1: tenantId retiré du schéma — ctx.tenantId utilisé
    */
-  getConfig: protectedProcedure
-    .input(z.object({ tenantId: z.number() }))
-    .query(async ({ input }) => {
+  getConfig: tenantProcedure
+    .query(async ({ ctx }) => {
       try {
-        const agentType = await getAgentType(input.tenantId);
-        const history = await getTenantAgentSwitchHistory(input.tenantId, 10);
+        const tenantId = ctx.tenantId;
+        const agentType = await getAgentType(tenantId);
+        const history = await getTenantAgentSwitchHistory(tenantId, 10);
         // Récupérer la config avancée si disponible
         let aiAutomationRate = 80;
         let escalationThreshold = 50;
@@ -170,7 +173,7 @@ export const agentSwitchRouter = router({
           const [config] = await db
             .select()
             .from(tenantSettings)
-            .where(eq(tenantSettings.tenantId, input.tenantId))
+            .where(eq(tenantSettings.tenantId, tenantId))
             .limit(1);
           if (config) {
             const settings = config.agentSwitchSettings as Record<string, unknown> | null;
@@ -184,7 +187,7 @@ export const agentSwitchRouter = router({
         }
 
         return {
-          tenantId: input.tenantId,
+          tenantId,
           currentMode: agentType,
           isAIEnabled: agentType?.toLowerCase() === 'ai',
           recentHistory: history,
@@ -201,21 +204,21 @@ export const agentSwitchRouter = router({
     }),
 
   /**
-   * Récupère l’historique des bascules pour un tenant (admin only)
+   * Récupère l'historique des bascules pour un tenant (admin only)
+   * ✅ BLOC 1: tenantId retiré du schéma — ctx.tenantId utilisé
    */
   getTenantHistory: adminProcedure
     .input(
       z.object({
-        tenantId: z.number(),
         limit: z.number().optional().default(100),
       })
     )
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       try {
-        const history = await getTenantAgentSwitchHistory(input.tenantId, input.limit);
+        const history = await getTenantAgentSwitchHistory(ctx.tenantId, input.limit);
 
         return {
-          tenantId: input.tenantId,
+          tenantId: ctx.tenantId,
           history,
         };
       } catch (error: any) {

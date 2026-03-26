@@ -117,7 +117,8 @@ async function getAdminInput(): Promise<AdminInput> {
   }
 
   // Valeurs par défaut pour le développement
-  const defaultEmail = "admin@servicall.com";
+  // ✅ BLOC 1: Valeur par défaut depuis env ou vide (l'utilisateur doit saisir)
+  const defaultEmail = process.env['ADMIN_EMAIL'] ?? "";
   const defaultPassword = "admin123";
   const defaultName = "Administrateur";
 

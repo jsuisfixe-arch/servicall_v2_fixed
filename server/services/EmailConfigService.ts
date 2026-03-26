@@ -10,7 +10,12 @@ import { eq, and } from "drizzle-orm";
 import { logger } from "../core/logger";
 import crypto from "crypto";
 
-const ENCRYPTION_KEY = process.env['EMAIL_ENCRYPTION_KEY'] || "default-key-change-in-production";
+// ✅ BLOC 1: Fallback de clé de chiffrement supprimé — EMAIL_ENCRYPTION_KEY requis
+const _emailEncKey = process.env['EMAIL_ENCRYPTION_KEY'];
+if (!_emailEncKey) {
+  throw new Error('[EmailConfigService] EMAIL_ENCRYPTION_KEY est requis dans les variables d\'environnement. Ne jamais utiliser une clé par défaut.');
+}
+const ENCRYPTION_KEY = _emailEncKey;
 const ENCRYPTION_IV_LENGTH = 16;
 
 export class EmailConfigService {

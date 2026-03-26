@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, tenantProcedure, protectedProcedure } from "../_core/trpc";
+import { router, tenantProcedure,  } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { logger } from "../infrastructure/logger";
 import { 
@@ -74,7 +74,7 @@ export const securityRouter = router({
   /**
    * Résout une violation
    */
-  resolveViolation: protectedProcedure
+  resolveViolation: tenantProcedure
     .input(z.object({
       violationId: z.string(),
       resolution: z.string(),
@@ -86,7 +86,7 @@ export const securityRouter = router({
   /**
    * Lance une vérification périodique
    */
-  runPeriodicComplianceCheck: protectedProcedure
+  runPeriodicComplianceCheck: tenantProcedure
     .mutation(async ({ ctx }) => {
       return { success: true };
     }),
@@ -94,7 +94,7 @@ export const securityRouter = router({
   /**
    * Génère un rapport d'audit
    */
-  generateAuditReport: protectedProcedure
+  generateAuditReport: tenantProcedure
     .input(z.object({
       startDate: z.string(),
       endDate: z.string(),
@@ -107,7 +107,7 @@ export const securityRouter = router({
   /**
    * Rotation de clé
    */
-  rotateKey: protectedProcedure
+  rotateKey: tenantProcedure
     .mutation(async ({ ctx }) => {
       return { success: true };
     }),

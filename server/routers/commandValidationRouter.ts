@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../_core/trpc";
+import { router, tenantProcedure } from "../_core/trpc";
 import { CommandValidationService } from "../services/commandValidationService";
 import { TRPCError } from "@trpc/server";
 
@@ -11,7 +11,7 @@ export const commandValidationRouter = router({
   /**
    * Valide automatiquement une commande (IA)
    */
-  validateAutomatically: protectedProcedure
+  validateAutomatically: tenantProcedure
     .input(
       z.object({
         invoiceId: z.number().int().positive(),
@@ -53,7 +53,7 @@ export const commandValidationRouter = router({
         });
       }
 
-      if (invoice.tenantId !== ctx.tenantId!) {
+      if (invoice.tenantId !== ctx.tenantId) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You don't have access to this invoice",
@@ -75,7 +75,7 @@ export const commandValidationRouter = router({
   /**
    * Valide manuellement une commande (Humain)
    */
-  validateManually: protectedProcedure
+  validateManually: tenantProcedure
     .input(
       z.object({
         invoiceId: z.number().int().positive(),
@@ -119,7 +119,7 @@ export const commandValidationRouter = router({
         });
       }
 
-      if (invoice.tenantId !== ctx.tenantId!) {
+      if (invoice.tenantId !== ctx.tenantId) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You don't have access to this invoice",
@@ -150,7 +150,7 @@ export const commandValidationRouter = router({
   /**
    * Récupère la validation d'une facture
    */
-  getValidation: protectedProcedure
+  getValidation: tenantProcedure
     .input(
       z.object({
         invoiceId: z.number().int().positive(),
@@ -192,7 +192,7 @@ export const commandValidationRouter = router({
         });
       }
 
-      if (invoice.tenantId !== ctx.tenantId!) {
+      if (invoice.tenantId !== ctx.tenantId) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You don't have access to this invoice",
@@ -214,7 +214,7 @@ export const commandValidationRouter = router({
   /**
    * Liste les validations en attente de revue humaine
    */
-  listPendingReviews: protectedProcedure
+  listPendingReviews: tenantProcedure
     .input(
       z.object({
         limit: z.number().int().positive().max(100).default(50),
@@ -225,7 +225,7 @@ export const commandValidationRouter = router({
       const { limit, offset } = input;
 
       const pendingReviews = await CommandValidationService.listPendingReviews(
-        ctx.tenantId!,
+        ctx.tenantId,
         limit,
         offset
       );
@@ -239,8 +239,8 @@ export const commandValidationRouter = router({
   /**
    * Récupère les statistiques de validation
    */
-  getStatistics: protectedProcedure.query(async ({ ctx }) => {
-    const stats = await CommandValidationService.getStatistics(ctx.tenantId!);
+  getStatistics: tenantProcedure.query(async ({ ctx }) => {
+    const stats = await CommandValidationService.getStatistics(ctx.tenantId);
 
     if (!stats) {
       throw new TRPCError({

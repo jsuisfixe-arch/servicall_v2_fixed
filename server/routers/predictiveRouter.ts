@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../procedures";
+import { router, tenantProcedure } from "../procedures";
 import { PredictiveService } from "../services/predictiveService";
 import { TRPCError } from "@trpc/server";
 
@@ -11,7 +11,7 @@ export const predictiveRouter = router({
   /**
    * Génère une prédiction pour une facture
    */
-  predictForInvoice: protectedProcedure
+  predictForInvoice: tenantProcedure
     .input(
       z.object({
         invoiceId: z.number().int().positive(),
@@ -53,7 +53,7 @@ export const predictiveRouter = router({
         });
       }
 
-      if (invoice.tenantId !== ctx.tenantId!) {
+      if (invoice.tenantId !== ctx.tenantId) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You don't have access to this invoice",
@@ -80,7 +80,7 @@ export const predictiveRouter = router({
   /**
    * Récupère la prédiction d'une facture
    */
-  getPrediction: protectedProcedure
+  getPrediction: tenantProcedure
     .input(
       z.object({
         invoiceId: z.number().int().positive(),
@@ -122,7 +122,7 @@ export const predictiveRouter = router({
         });
       }
 
-      if (invoice.tenantId !== ctx.tenantId!) {
+      if (invoice.tenantId !== ctx.tenantId) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You don't have access to this invoice",
@@ -144,7 +144,7 @@ export const predictiveRouter = router({
   /**
    * Met à jour le résultat réel d'une prédiction
    */
-  updateOutcome: protectedProcedure
+  updateOutcome: tenantProcedure
     .input(
       z.object({
         invoiceId: z.number().int().positive(),
@@ -187,7 +187,7 @@ export const predictiveRouter = router({
         });
       }
 
-      if (invoice.tenantId !== ctx.tenantId!) {
+      if (invoice.tenantId !== ctx.tenantId) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You don't have access to this invoice",
@@ -212,12 +212,12 @@ export const predictiveRouter = router({
   /**
    * Récupère la précision du modèle
    */
-  getModelAccuracy: protectedProcedure.query(async ({ ctx }) => {
-    const accuracy = await PredictiveService.getModelAccuracy(ctx.tenantId!);
+  getModelAccuracy: tenantProcedure.query(async ({ ctx }) => {
+    const accuracy = await PredictiveService.getModelAccuracy(ctx.tenantId);
 
     return {
       accuracy,
-      tenantId: ctx.tenantId!,
+      tenantId: ctx.tenantId,
     };
   }),
 });

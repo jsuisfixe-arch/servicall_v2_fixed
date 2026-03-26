@@ -71,6 +71,21 @@ export function getTenantCookie(req: Request): string | null {
   return (req.cookies as Record<string, string>)?.[TENANT_COOKIE_NAME] || null;
 }
 
+/**
+ * ✅ FIX CRITIQUE: extractTenantContext
+ * 
+ * AVANT (VULNÉRABLE):
+ *   - Acceptait le cookie JWT signé ✅
+ *   - Acceptait l'en-tête x-tenant-id non signé ❌ IDOR RISK
+ *   - Créait un contexte synthétique avec userId: 0, role: "agent"
+ *   - N'importe quel client pouvait envoyer x-tenant-id: 123
+ * 
+ * APRÈS (SÉCURISÉ):
+ *   - Accepte UNIQUEMENT le cookie JWT signé ✅
+ *   - Rejette l'en-tête x-tenant-id (non signé) ❌
+ *   - Retourne null si pas de cookie valide
+ *   - Force l'authentification avant accès tenant
+ */
 export async function extractTenantContext(req: Request): Promise<TenantPayload | null> {
   const token = getTenantCookie(req);
   if (token) {
@@ -78,21 +93,15 @@ export async function extractTenantContext(req: Request): Promise<TenantPayload 
     if (payload) return payload;
   }
 
-  const headerId = req.headers["x-tenant-id"];
-  if (headerId && typeof headerId === "string") {
-    const id = parseInt(headerId, 10);
-    if (!isNaN(id)) return { tenantId: id, userId: 0, role: "agent", issuedAt: Date.now() };
-  }
+  // ✅ FIX CRITIQUE: Suppression du fallback x-tenant-id non signé
+  // Cela force le client à avoir un cookie JWT signé valide
+  // Aucun fallback sur header non authentifié
 
   return null;
 }
 
 export async function switchTenant(userId: number, tenantId: number, res: Response): Promise<{ success: boolean; error?: string }> {
-  if (process.env['DB_ENABLED'] === "false") {
-    const token = await createTenantToken(tenantId, 1, "admin");
-    setTenantCookie(res, token);
-    return { success: true };
-  }
+  // ✅ BLOC 1: DB_ENABLED guard supprimé
   const role = await db.getUserRoleInTenant(userId, tenantId);
   if (!role) return { success: false, error: "Accès refusé" };
   const token = await createTenantToken(tenantId, userId, role as "owner" | "admin" | "manager" | "agent" | "viewer");
@@ -101,11 +110,7 @@ export async function switchTenant(userId: number, tenantId: number, res: Respon
 }
 
 export async function initializeDefaultTenant(userId: number, res: Response): Promise<{ tenantId: number; role: string | null } | null> {
-  if (process.env['DB_ENABLED'] === "false") {
-    const token = await createTenantToken(1, 1, "admin");
-    setTenantCookie(res, token);
-    return { tenantId: 1, role: "admin" };
-  }
+  // ✅ BLOC 1: DB_ENABLED guard supprimé
   const tenants = await db.getUserTenants(userId);
   if (tenants.length === 0) return null;
   const defaultTenant = tenants[0];

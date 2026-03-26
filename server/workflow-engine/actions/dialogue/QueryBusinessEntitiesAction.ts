@@ -3,7 +3,7 @@
  * Action workflow pour interroger les entités métier (produits, services, biens)
  */
 
-import type { FinalExecutionContext } from '../../structured-types';
+import type { FinalExecutionContext } from '../structured-types';
 import { businessKnowledgeService } from "../../../services/BusinessKnowledgeService";
 import { logger } from "../../../infrastructure/logger";
 

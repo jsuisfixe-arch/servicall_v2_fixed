@@ -2,26 +2,27 @@ import { AI_MODEL } from '../_core/aiModels';
 /**
  * AI Router - Endpoints pour l'interaction avec l'IA conversationnelle
  * et la gestion des rôles IA (listModels, getModel, createModel, updateModel, deleteModel)
+ * ✅ BLOC 2: Persistance en base de données (aiRoles table)
  */
 
 import { z } from 'zod';
-import { protectedProcedure, router } from '../procedures';
+import { tenantProcedure, router } from '../procedures';
 import { generateAIResponse, generateCompletion } from '../services/aiService';
 import { logger } from "../infrastructure/logger";
 import { TRPCError } from '@trpc/server';
+import { eq, and, desc } from 'drizzle-orm';
+import * as schema from "../../drizzle/schema";
 
 // Schéma commun pour un rôle IA
 const aiRoleSchema = z.object({
   name: z.string().min(1),
-  type: z.enum(['agent', 'supervisor']),
-  systemPrompt: z.string().default(''),
-  contextPrompt: z.string().default(''),
-  responseGuidelines: z.string().default(''),
+  description: z.string().optional(),
+  prompt: z.string().min(1),
+  model: z.string().default("gpt-4"),
+  temperature: z.number().min(0).max(1).default(0.7),
+  isActive: z.boolean().default(true),
+  metadata: z.record(z.unknown()).optional(),
 });
-
-// Store en mémoire pour les rôles IA (à remplacer par DB en production)
-const aiRolesStore = new Map<number, Record<string, unknown>>();
-let nextRoleId = 1;
 
 export const aiRouter = router({
   /**
@@ -29,10 +30,14 @@ export const aiRouter = router({
    */
   listModels: tenantProcedure
     .query(async ({ ctx }) => {
-      const tenantId = ctx.tenantId;
-      const roles = Array.from(aiRolesStore.values()).filter(
-        (r) => r["tenantId"] === tenantId
-      );
+      const db = await import("../db").then(m => m.getDb());
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const roles = await db.select()
+        .from(schema.aiRoles)
+        .where(eq(schema.aiRoles.tenantId, ctx.tenantId))
+        .orderBy(desc(schema.aiRoles.createdAt));
+
       return { roles, total: roles.length };
     }),
 
@@ -42,9 +47,19 @@ export const aiRouter = router({
   getModel: tenantProcedure
     .input(z.object({ modelId: z.number() }))
     .query(async ({ input, ctx }) => {
-      const tenantId = ctx.tenantId;
-      const role = aiRolesStore.get(input.modelId);
-      if (!role || role["tenantId"] !== tenantId) {
+      const db = await import("../db").then(m => m.getDb());
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const roles = await db.select()
+        .from(schema.aiRoles)
+        .where(and(
+          eq(schema.aiRoles.id, input.modelId),
+          eq(schema.aiRoles.tenantId, ctx.tenantId)
+        ))
+        .limit(1);
+
+      const role = roles[0];
+      if (!role) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Rôle IA introuvable' });
       }
       return role;
@@ -56,18 +71,21 @@ export const aiRouter = router({
   createModel: tenantProcedure
     .input(aiRoleSchema)
     .mutation(async ({ input, ctx }) => {
-      const tenantId = ctx.tenantId;
-      const id = nextRoleId++;
-      const role: Record<string, unknown> = {
-        id,
-        ...input,
-        tenantId,
-        status: 'active',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      aiRolesStore.set(id, role);
-      logger.info('[AI Router] Rôle IA créé', { id, tenantId });
+      const db = await import("../db").then(m => m.getDb());
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const [role] = await db.insert(schema.aiRoles).values({
+        tenantId: ctx.tenantId,
+        name: input.name,
+        description: input.description,
+        prompt: input.prompt,
+        model: input.model,
+        temperature: input.temperature.toString(),
+        isActive: input.isActive,
+        metadata: input.metadata || {},
+      }).returning();
+
+      logger.info('[AI Router] Rôle IA créé', { id: role.id, tenantId: ctx.tenantId });
       return { success: true, role };
     }),
 
@@ -77,14 +95,34 @@ export const aiRouter = router({
   updateModel: tenantProcedure
     .input(aiRoleSchema.partial().extend({ modelId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      const tenantId = ctx.tenantId;
-      const existing = aiRolesStore.get(input.modelId);
-      if (!existing || existing["tenantId"] !== tenantId) {
+      const db = await import("../db").then(m => m.getDb());
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const { modelId, ...updateData } = input;
+
+      // Vérifier l'existence et l'appartenance
+      const existing = await db.select()
+        .from(schema.aiRoles)
+        .where(and(
+          eq(schema.aiRoles.id, modelId),
+          eq(schema.aiRoles.tenantId, ctx.tenantId)
+        ))
+        .limit(1);
+
+      if (existing.length === 0) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Rôle IA introuvable' });
       }
-      const updated: Record<string, unknown> = { ...existing, ...input, updatedAt: new Date() };
-      aiRolesStore.set(input.modelId, updated);
-      logger.info('[AI Router] Rôle IA mis à jour', { id: input.modelId });
+
+      const [updated] = await db.update(schema.aiRoles)
+        .set({
+          ...updateData,
+          temperature: updateData.temperature?.toString(),
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.aiRoles.id, modelId))
+        .returning();
+
+      logger.info('[AI Router] Rôle IA mis à jour', { id: modelId });
       return { success: true, role: updated };
     }),
 
@@ -94,12 +132,20 @@ export const aiRouter = router({
   deleteModel: tenantProcedure
     .input(z.object({ modelId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      const tenantId = ctx.tenantId;
-      const existing = aiRolesStore.get(input.modelId);
-      if (!existing || existing["tenantId"] !== tenantId) {
+      const db = await import("../db").then(m => m.getDb());
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const result = await db.delete(schema.aiRoles)
+        .where(and(
+          eq(schema.aiRoles.id, input.modelId),
+          eq(schema.aiRoles.tenantId, ctx.tenantId)
+        ))
+        .returning();
+
+      if (result.length === 0) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Rôle IA introuvable' });
       }
-      aiRolesStore.delete(input.modelId);
+
       logger.info('[AI Router] Rôle IA supprimé', { id: input.modelId });
       return { success: true };
     }),
@@ -107,7 +153,7 @@ export const aiRouter = router({
   /**
    * Chat avec l'IA - Génère une réponse contextuelle
    */
-  chat: protectedProcedure
+  chat: tenantProcedure
     .input(
       z.object({
         message: z.string().min(1, 'Le message ne peut pas être vide'),
@@ -121,18 +167,13 @@ export const aiRouter = router({
             })).optional(),
           })
           .optional(),
-        model: z.enum(['gpt-4o-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-4o-mini', 'gemini-1.5-flash']).optional().default(AI_MODEL.DEFAULT as unknown),
+        model: z.enum(['gpt-4o-mini', 'gpt-4o', 'gemini-1.5-flash']).optional().default(AI_MODEL.DEFAULT as any),
         temperature: z.number().min(0).max(2).optional(),
         maxTokens: z.number().optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
-      // ✅ GUARD: Vérifier que l'utilisateur est présent
-      if (!ctx.user) {
-        throw new TRPCError({ code: "UNAUTHORIZED", message: "Utilisateur non authentifié" });
-      }
-
-      const tenantId = ctx.tenantId ?? 0;
+      const tenantId = ctx.tenantId;
 
       try {
         logger.info('[AI Router] Chat request received', {

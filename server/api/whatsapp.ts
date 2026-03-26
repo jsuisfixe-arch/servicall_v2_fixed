@@ -4,6 +4,12 @@
  * Reçoit les messages WhatsApp entrants (Meta Business API ou Twilio)
  * et déclenche le dialogue IA.
  *
+ * FIX CRIT-3: Suppression de l'injection SQL par interpolation de chaîne
+ *   Avant: WHERE phone_number = '${toNumber.replace(/'/g, "''")}'
+ *          Interpolation directe dans SQL brut → injection possible.
+ *   Après: Requête Drizzle ORM paramétrée sur le champ settings JSON.
+ *          Aucune interpolation de données utilisateur dans le SQL.
+ *
  * Endpoints :
  *  GET  /api/whatsapp/webhook      → Vérification Meta (challenge)
  *  POST /api/whatsapp/webhook      → Messages entrants Meta
@@ -19,14 +25,14 @@ import {
   parseTwilioWebhookMessage,
 } from "../services/whatsappAIService";
 import { IdempotencyService } from "../workflow-engine/utils/IdempotencyService";
+import { eq, sql } from "drizzle-orm";
 
 const router = Router();
 
 // ─────────────────────────────────────────────
-// Helper: Résoudre la config tenant depuis un numéro WhatsApp
+// Type de config tenant WhatsApp
 // ─────────────────────────────────────────────
 
-// ✅ FIX: Type extrait pour éviter la confusion du parser avec les génériques multilignes
 type TenantWhatsAppConfig = {
   tenantId: number;
   tenantName: string;
@@ -39,64 +45,87 @@ type TenantWhatsAppConfig = {
   };
 } | null;
 
+// ─────────────────────────────────────────────
+// FIX CRIT-3: Résolution du tenant — paramétré, sans interpolation SQL
+// ─────────────────────────────────────────────
+
 async function resolveTenantFromWhatsApp(toNumber: string): Promise<TenantWhatsAppConfig> {
+  // Validation du format de numéro avant toute requête (sécurité défense en profondeur)
+  const phoneRegex = /^\+?[1-9]\d{7,14}$/;
+  if (!phoneRegex.test(toNumber.replace(/[\s\-().]/g, ''))) {
+    logger.warn("[WhatsApp] Invalid phone number format rejected");
+    return null;
+  }
+
   try {
     const dbModule = await import("../db");
-    const db = await dbModule.db;
+    const db = dbModule.db;
     if (!db) return null;
 
-    // Chercher le tenant par numéro WhatsApp
-    // On cherche dans tenants.phoneNumber ou tenants.whatsapp_number
-    const result = await db.execute(`
-      SELECT id, name,
-        waba_phone_number_id,
-        waba_access_token,
-        twilio_account_sid,
-        twilio_auth_token,
-        twilio_phone_number
-      FROM tenants
-      WHERE phone_number = '${toNumber.replace(/'/g, "''")}' 
-         OR phone_number = '+${toNumber.replace(/^\+/, "").replace(/'/g, "''")}'
-         OR twilio_phone_number = '${toNumber.replace(/'/g, "''")}'
-      LIMIT 1
-    `);
+    const { tenants } = await import("../../drizzle/schema");
+    const normalizedNumber = toNumber.startsWith('+') ? toNumber : `+${toNumber}`;
+    const rawNumber = normalizedNumber.replace(/^\+/, '');
 
-    const row = ((result as any).rows ?? result ?? [])[0];
+    // FIX CRIT-3: Drizzle ORM avec SQL paramétré sur le settings JSON
+    // Aucune interpolation — toutes les valeurs sont passées comme paramètres liés
+    const rows = await db
+      .select({
+        id: tenants.id,
+        name: tenants.name,
+        settings: tenants.settings,
+      })
+      .from(tenants)
+      .where(
+        sql`(
+          ${tenants.settings}->>'twilioPhone' = ${toNumber}
+          OR ${tenants.settings}->>'twilioPhone' = ${normalizedNumber}
+          OR ${tenants.settings}->>'twilioPhone' = ${rawNumber}
+          OR ${tenants.settings}->>'wabaPhoneNumber' = ${toNumber}
+          OR ${tenants.settings}->>'wabaPhoneNumber' = ${normalizedNumber}
+        )`
+      )
+      .limit(1);
+
+    const row = rows[0];
     if (!row) {
-      // Si VPS single-tenant : prendre le premier tenant actif
-      const fallback = await db.execute(
-        `SELECT id, name FROM tenants WHERE status = 'active' LIMIT 1`
-      );
-      const fb = ((fallback as any).rows ?? fallback ?? [])[0];
+      // Fallback VPS single-tenant: premier tenant actif
+      const fallbackRows = await db
+        .select({ id: tenants.id, name: tenants.name, settings: tenants.settings })
+        .from(tenants)
+        .where(eq(tenants.isActive, true))
+        .limit(1);
+
+      const fb = fallbackRows[0];
       if (!fb) return null;
 
+      const fbSettings = (fb.settings ?? {}) as Record<string, string>;
       return {
         tenantId: fb.id,
         tenantName: fb.name,
         config: {
-          twilioSid: process.env["TWILIO_ACCOUNT_SID"],
-          twilioToken: process.env["TWILIO_AUTH_TOKEN"],
-          twilioPhone: process.env["TWILIO_PHONE_NUMBER"],
-          wabaPhoneNumberId: process.env["WABA_PHONE_NUMBER_ID"],
-          wabaAccessToken: process.env["WABA_ACCESS_TOKEN"],
+          twilioSid: fbSettings['twilioAccountSid'] ?? process.env["TWILIO_ACCOUNT_SID"],
+          twilioToken: fbSettings['twilioAuthToken'] ?? process.env["TWILIO_AUTH_TOKEN"],
+          twilioPhone: fbSettings['twilioPhone'] ?? process.env["TWILIO_PHONE_NUMBER"],
+          wabaPhoneNumberId: fbSettings['wabaPhoneNumberId'] ?? process.env["WABA_PHONE_NUMBER_ID"],
+          wabaAccessToken: fbSettings['wabaAccessToken'] ?? process.env["WABA_ACCESS_TOKEN"],
         },
       };
     }
 
+    const rowSettings = (row.settings ?? {}) as Record<string, string>;
     return {
       tenantId: row.id,
       tenantName: row.name,
       config: {
-        wabaPhoneNumberId: row.waba_phone_number_id ?? process.env["WABA_PHONE_NUMBER_ID"],
-        wabaAccessToken: row.waba_access_token ?? process.env["WABA_ACCESS_TOKEN"],
-        twilioSid: row.twilio_account_sid ?? process.env["TWILIO_ACCOUNT_SID"],
-        twilioToken: row.twilio_auth_token ?? process.env["TWILIO_AUTH_TOKEN"],
-        twilioPhone: row.twilio_phone_number ?? process.env["TWILIO_PHONE_NUMBER"],
+        wabaPhoneNumberId: rowSettings['wabaPhoneNumberId'] ?? process.env["WABA_PHONE_NUMBER_ID"],
+        wabaAccessToken: rowSettings['wabaAccessToken'] ?? process.env["WABA_ACCESS_TOKEN"],
+        twilioSid: rowSettings['twilioAccountSid'] ?? process.env["TWILIO_ACCOUNT_SID"],
+        twilioToken: rowSettings['twilioAuthToken'] ?? process.env["TWILIO_AUTH_TOKEN"],
+        twilioPhone: rowSettings['twilioPhone'] ?? process.env["TWILIO_PHONE_NUMBER"],
       },
     };
   } catch (err) {
     logger.error("[WhatsApp] Failed to resolve tenant", { err });
-    // Fallback VPS single-tenant
     return {
       tenantId: parseInt(process.env["DEFAULT_TENANT_ID"] ?? "1"),
       tenantName: process.env["APP_NAME"] ?? "Servicall",
@@ -120,147 +149,93 @@ router.get("/webhook", (req: Request, res: Response) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  const verifyToken = process.env["WABA_WEBHOOK_VERIFY_TOKEN"] ?? "servicall_verify_token";
+  const verifyToken =
+    process.env["META_WEBHOOK_VERIFY_TOKEN"] ??
+    process.env["WABA_WEBHOOK_VERIFY_TOKEN"] ??
+    "servicall_verify_token";
 
   if (mode === "subscribe" && token === verifyToken) {
-    logger.info("[WhatsApp] Meta webhook verification successful");
-    res.status(200).send(challenge);
+    logger.info("[WhatsApp] Meta webhook verification OK");
+    return res.status(200).send(challenge);
   } else {
-    logger.warn("[WhatsApp] Meta webhook verification failed", { mode, token });
-    res.sendStatus(403);
+    logger.warn("[WhatsApp] Meta webhook verification failed", { mode });
+    return res.sendStatus(403);
   }
 });
 
 // ─────────────────────────────────────────────
-// POST /api/whatsapp/webhook — Messages Meta
+// POST /api/whatsapp/webhook — Messages Meta entrants
 // ─────────────────────────────────────────────
 
 router.post("/webhook", async (req: Request, res: Response) => {
-  // ACK immédiat à Meta (ils attendent < 5s)
+  // ACK immédiat requis par Meta (< 5s)
   res.sendStatus(200);
 
   try {
-    const body = req.body;
-
-    // Vérifier que c'est bien un message WhatsApp
-    if (body.object !== "whatsapp_business_account") return;
-
+    const body = req.body as Record<string, unknown>;
     const message = parseMetaWebhookMessage(body);
-    if (!message) return; // Pas un message texte (statut, réaction, etc.)
 
-    // Idempotence — éviter les doublons Meta
+    if (!message || !message.text) return;
+
     const isNew = await IdempotencyService.checkAndSet(message.messageId, "whatsapp-meta");
-    if (!isNew) {
-      logger.info("[WhatsApp] Duplicate message ignored", { messageId: message.messageId });
+    if (!isNew) return;
+
+    const tenantConfig = await resolveTenantFromWhatsApp(message.to ?? "");
+    if (!tenantConfig) {
+      logger.warn("[WhatsApp] Could not resolve tenant for Meta message");
       return;
     }
 
-    // Résoudre le tenant
-    const tenant = await resolveTenantFromWhatsApp(message.to);
-    if (!tenant) {
-      logger.warn("[WhatsApp] Could not resolve tenant for number", { to: message.to });
-      return;
-    }
-
-    logger.info("[WhatsApp] Processing Meta message", {
-      from: message.from,
-      tenantId: tenant.tenantId,
-      preview: message.body.slice(0, 50),
-    });
-
-    // Déclencher le dialogue IA
-    const result = await handleIncomingWhatsAppMessage(
-      message,
-      tenant.tenantId,
-      tenant.tenantName,
-      tenant.config
-    );
-
-    logger.info("[WhatsApp] Meta dialogue completed", {
-      replied: result.replied,
-      language: result.language,
-      memoryUsed: result.memoryUsed,
-    });
+    logger.info("[WhatsApp] Processing Meta message", { from: message.from, tenantId: tenantConfig.tenantId });
+    await handleIncomingWhatsAppMessage(message, tenantConfig.tenantId, tenantConfig.tenantName, tenantConfig.config);
   } catch (err) {
-    logger.error("[WhatsApp] Meta webhook processing error", { err });
+    logger.error("[WhatsApp] Error processing Meta webhook", { err });
   }
 });
 
 // ─────────────────────────────────────────────
-// POST /api/whatsapp/twilio — Messages Twilio
+// POST /api/whatsapp/twilio — Messages Twilio entrants
 // ─────────────────────────────────────────────
 
 router.post("/twilio", async (req: Request, res: Response) => {
+  res.sendStatus(200);
+
   try {
-    const message = parseTwilioWebhookMessage(req.body);
-    if (!message) {
-      res.status(200).send("<Response/>");
-      return;
-    }
+    const body = req.body as Record<string, unknown>;
+    const message = parseTwilioWebhookMessage(body);
 
-    // ACK Twilio
-    res.status(200).type("text/xml").send("<Response/>");
+    if (!message || !message.text) return;
 
-    // Idempotence
     const isNew = await IdempotencyService.checkAndSet(message.messageId, "whatsapp-twilio");
     if (!isNew) return;
 
-    // Résoudre le tenant
-    const tenant = await resolveTenantFromWhatsApp(message.to);
-    if (!tenant) {
-      logger.warn("[WhatsApp] Could not resolve tenant", { to: message.to });
+    const tenantConfig = await resolveTenantFromWhatsApp(message.to ?? "");
+    if (!tenantConfig) {
+      logger.warn("[WhatsApp] Could not resolve tenant for Twilio message");
       return;
     }
 
-    logger.info("[WhatsApp] Processing Twilio message", {
-      from: message.from,
-      tenantId: tenant.tenantId,
-    });
-
-    await handleIncomingWhatsAppMessage(
-      message,
-      tenant.tenantId,
-      tenant.tenantName,
-      tenant.config
-    );
+    logger.info("[WhatsApp] Processing Twilio message", { from: message.from, tenantId: tenantConfig.tenantId });
+    await handleIncomingWhatsAppMessage(message, tenantConfig.tenantId, tenantConfig.tenantName, tenantConfig.config);
   } catch (err) {
-    logger.error("[WhatsApp] Twilio webhook error", { err });
-    if (!res.headersSent) res.status(200).send("<Response/>");
+    logger.error("[WhatsApp] Error processing Twilio webhook", { err });
   }
 });
 
 // ─────────────────────────────────────────────
-// GET /api/whatsapp/status — Statut configuration
+// GET /api/whatsapp/status — Statut config
 // ─────────────────────────────────────────────
 
-router.get("/status", (req: Request, res: Response) => {
-  const metaConfigured = !!(
-    process.env["WABA_PHONE_NUMBER_ID"] &&
-    process.env["WABA_ACCESS_TOKEN"]
-  );
-  const twilioConfigured = !!(
-    process.env["TWILIO_ACCOUNT_SID"] &&
-    process.env["TWILIO_AUTH_TOKEN"] &&
-    process.env["TWILIO_PHONE_NUMBER"]
-  );
+router.get("/status", (_req: Request, res: Response) => {
+  const hasWaba = !!(process.env["WABA_PHONE_NUMBER_ID"] && process.env["WABA_ACCESS_TOKEN"]);
+  const hasTwilio = !!(process.env["TWILIO_ACCOUNT_SID"] && process.env["TWILIO_AUTH_TOKEN"] && process.env["TWILIO_PHONE_NUMBER"]);
 
-  res.json({
-    meta: {
-      configured: metaConfigured,
-      phoneNumberId: process.env["WABA_PHONE_NUMBER_ID"]
-        ? `...${process.env["WABA_PHONE_NUMBER_ID"].slice(-4)}`
-        : null,
-      webhookUrl: `${process.env["APP_URL"] ?? "https://your-domain.com"}/api/whatsapp/webhook`,
-      verifyToken: process.env["WABA_WEBHOOK_VERIFY_TOKEN"] ? "configured" : "not set",
+  return res.json({
+    status: "ok",
+    providers: {
+      meta: hasWaba ? "configured" : "not_configured",
+      twilio: hasTwilio ? "configured" : "not_configured",
     },
-    twilio: {
-      configured: twilioConfigured,
-      webhookUrl: `${process.env["APP_URL"] ?? "https://your-domain.com"}/api/whatsapp/twilio`,
-    },
-    activeProvider: metaConfigured ? "meta" : twilioConfigured ? "twilio" : "none",
-    recommendation: metaConfigured
-      ? "Meta WhatsApp Business API active (recommended)"
-      : "Configure WABA_PHONE_NUMBER_ID + WABA_ACCESS_TOKEN for cheaper Meta API",
   });
 });
 

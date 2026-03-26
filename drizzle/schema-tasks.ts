@@ -179,3 +179,28 @@ export const commandValidations = pgTable("command_validations", {
 
 export type CommandValidation = typeof commandValidations.$inferSelect;
 export type InsertCommandValidation = typeof commandValidations.$inferInsert;
+
+// ============================================
+// WORKFLOW_DEAD_LETTERS TABLE — Jobs échoués (Axe 2)
+// ============================================
+export const workflowDeadLetters = pgTable("workflow_dead_letters", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  workflowId: integer("workflow_id"),
+  jobId: varchar("job_id", { length: 255 }).notNull(),
+  queueName: varchar("queue_name", { length: 100 }).notNull(),
+  payload: json("payload").notNull(),
+  error: text("error"),
+  stack: text("stack"),
+  attempts: integer("attempts").default(0),
+  status: varchar("status", { length: 50 }).default("failed"), // 'failed', 'retrying', 'resolved'
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => ({
+  tenantIdIdx: index("idx_workflow_dead_letters_tenant_id_idx").on(table.tenantId),
+  jobIdIdx: index("idx_workflow_dead_letters_job_id_idx").on(table.jobId),
+  statusIdx: index("idx_workflow_dead_letters_status_idx").on(table.status),
+}));
+
+export type WorkflowDeadLetter = typeof workflowDeadLetters.$inferSelect;
+export type InsertWorkflowDeadLetter = typeof workflowDeadLetters.$inferInsert;

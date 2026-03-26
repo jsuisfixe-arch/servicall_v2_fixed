@@ -5,8 +5,8 @@
  */
 
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
-import { Logger } from "../../utils/Logger";
+import type { FinalExecutionContext } from "../structured-types";
+import { Logger } from "../../infrastructure/logger";
 import { z } from "zod";
 import twilio from "twilio";
 import { ENV } from "../../_core/env";

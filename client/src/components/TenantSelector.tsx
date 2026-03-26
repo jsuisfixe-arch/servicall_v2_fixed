@@ -26,9 +26,23 @@ export function TenantSelector() {
     "tenantId"
   );
 
-  const handleTenantChange = (tenantId: string) => {
-    // Le backend attend un number, mais l'URL et le composant Select utilisent des strings
-    setLocation(`/dashboard?tenantId=${tenantId}`);
+  const switchTenantMutation = trpc.tenant.switchTenant.useMutation({
+    onSuccess: (data) => {
+      // Une fois le cookie mis à jour, on redirige
+      setLocation(`/dashboard?tenantId=${data.tenantId}`);
+      // Recharger pour s'assurer que tout le contexte est frais
+      window.location.reload();
+    },
+    onError: (error) => {
+      toast.error(`Erreur lors du changement d'espace : ${error.message}`);
+    }
+  });
+
+  const handleTenantChange = async (tenantId: string) => {
+    const id = parseInt(tenantId);
+    if (!isNaN(id)) {
+      await switchTenantMutation.mutateAsync({ tenantId: id });
+    }
   };
 
   return (

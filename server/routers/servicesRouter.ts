@@ -1,8 +1,8 @@
-
 /**
  * Services Router - 10 Services Métier Avancés
  * Extracteur de Leads, Mémoire IA, Workflows, Rapports, Webhooks, Blueprints, Stripe, Email, Monitoring, Training
- *import { router, tenantProcedure } from "../procedures";
+ */
+import { router, tenantProcedure } from "../procedures";
 import { z } from "zod";
 import { db } from "../db";
 import {
@@ -102,7 +102,7 @@ export const servicesRouter = router({
 
     delete: tenantProcedure
       .input(z.object({ memoryId: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         await db.delete(contactMemories).where(and(eq(contactMemories.id, input.memoryId), eq(contactMemories.tenantId, ctx.tenantId)));
         return { success: true };
       }),
@@ -134,7 +134,7 @@ export const servicesRouter = router({
 
     update: tenantProcedure
       .input(z.object({ id: z.number(), definition: z.record(z.unknown()) }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const result = await db
           .update(workflows)
           .set({ definition: input.definition, updatedAt: new Date() })
@@ -145,7 +145,7 @@ export const servicesRouter = router({
 
     delete: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         await db.delete(workflows).where(and(eq(workflows.id, input.id), eq(workflows.tenantId, ctx.tenantId)));
         return { success: true };
       }),
@@ -204,7 +204,7 @@ export const servicesRouter = router({
 
     delete: tenantProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         await db.delete(webhookSubscriptions).where(and(eq(webhookSubscriptions.id, input.id), eq(webhookSubscriptions.tenantId, ctx.tenantId)));
         return { success: true };
       }),
@@ -320,7 +320,6 @@ export const servicesRouter = router({
   training: router({
     getProgress: tenantProcedure.query(async ({ ctx }) => {
       const userId = ctx.user.id;
-      const tenantId = ctx.tenantId;
       return await db
         .select()
         .from(trainingModules)

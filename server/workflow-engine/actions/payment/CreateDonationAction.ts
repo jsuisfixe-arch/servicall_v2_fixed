@@ -4,7 +4,7 @@
  */
 
 import { ActionHandler, ActionResult, ExecutionContext, ActionConfig, CommonExecutionVariables } from "../../types";
-import { Logger } from "../../utils/Logger";
+import { Logger } from "../../infrastructure/logger";
 
 export class CreateDonationAction implements ActionHandler<ActionConfig, ExecutionContext<CommonExecutionVariables>> {
   name = 'create_donation';

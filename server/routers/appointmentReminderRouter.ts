@@ -1,18 +1,19 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../procedures";
+import { router, tenantProcedure } from "../procedures";
 import { AppointmentReminderService } from "../services/appointmentReminderService";
 import { TRPCError } from "@trpc/server";
 import { logger } from "../infrastructure/logger";
 
 /**
  * Router pour les rappels de rendez-vous
+ * ✅ BLOC 1: Toutes les procédures utilisent tenantProcedure — ctx.tenantId garanti non-null
  */
 
 export const appointmentReminderRouter = router({
   /**
    * Crée les rappels pour un rendez-vous
    */
-  createForAppointment: protectedProcedure
+  createForAppointment: tenantProcedure
     .input(
       z.object({
         appointmentId: z.number().int().positive(),
@@ -21,7 +22,6 @@ export const appointmentReminderRouter = router({
     .mutation(async ({ input, ctx }) => {
       const { appointmentId } = input;
 
-      // Vérifier les permissions
       const db = await import("../db").then(m => m.getDb());
       if (!db) {
         throw new TRPCError({
@@ -29,9 +29,6 @@ export const appointmentReminderRouter = router({
           message: "Database not available",
         });
       }
-
-      const { appointments } = await import("../../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
 
       const appointment = await db.getAppointmentById(appointmentId, ctx.tenantId);
 
@@ -60,7 +57,7 @@ export const appointmentReminderRouter = router({
   /**
    * Récupère les rappels d'un rendez-vous
    */
-  getForAppointment: protectedProcedure
+  getForAppointment: tenantProcedure
     .input(
       z.object({
         appointmentId: z.number().int().positive(),
@@ -70,7 +67,6 @@ export const appointmentReminderRouter = router({
       const { appointmentId } = input;
 
       try {
-        // Vérifier les permissions
         const db = await import("../db").then(m => m.getDb());
         if (!db) {
           throw new TRPCError({
@@ -78,9 +74,6 @@ export const appointmentReminderRouter = router({
             message: "Base de données non disponible",
           });
         }
-
-        const { appointments } = await import("../../drizzle/schema");
-        const { eq } = await import("drizzle-orm");
 
         const appointment = await db.getAppointmentById(appointmentId, ctx.tenantId);
 
@@ -111,14 +104,9 @@ export const appointmentReminderRouter = router({
 
   /**
    * Récupère les statistiques des rappels
+   * ✅ BLOC 1: tenantProcedure garantit ctx.tenantId non-null — vérification manuelle supprimée
    */
-  getStatistics: protectedProcedure.query(async ({ ctx }) => {
-    if (!ctx.tenantId) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "Tenant ID is required",
-      });
-    }
+  getStatistics: tenantProcedure.query(async ({ ctx }) => {
     const stats = await AppointmentReminderService.getStatistics(ctx.tenantId);
 
     if (!stats) {

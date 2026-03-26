@@ -5,9 +5,9 @@
 
 import { z } from "zod";
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
+import type { FinalExecutionContext } from "../structured-types";
 import { quickSentimentAnalysis } from "../../../services/sentimentAnalysisService";
-import { Logger } from "../../utils/Logger";
+import { Logger } from "../../infrastructure/logger";
 
 // Configuration structurée
 const AISentimentConfigSchema = z.object({

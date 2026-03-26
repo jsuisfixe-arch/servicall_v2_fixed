@@ -45,9 +45,7 @@ export const getDbInstance = (): DrizzleDB => {
  * ✅ ACTION 6 – Injecter tenantId côté DB
  */
 export async function withTenant<T>(tenantId: number, callback: (tx: DbTransaction) => Promise<T>): Promise<T> {
-  if (process.env['DB_ENABLED'] === "false") {
-      return await callback({} as any);
-  }
+  // ✅ BLOC 1: DB_ENABLED guard supprimé — toujours utiliser la vraie DB
   const database = getDbInstance();
   return await database.transaction(async (tx) => {
     await tx.execute(sql`SET app.tenant_id = ${tenantId}`);
@@ -59,9 +57,7 @@ export async function withTenant<T>(tenantId: number, callback: (tx: DbTransacti
  * ✅ ACTION 12 – Timeout par requête/transaction
  */
 export async function withTimeout<T>(timeoutMs: number, callback: (tx: DbTransaction) => Promise<T>): Promise<T> {
-  if (process.env['DB_ENABLED'] === "false") {
-      return await callback({} as any);
-  }
+  // ✅ BLOC 1: DB_ENABLED guard supprimé — toujours utiliser la vraie DB
   const database = getDbInstance();
   return await database.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL statement_timeout = ${timeoutMs}`);
@@ -72,18 +68,12 @@ export async function withTimeout<T>(timeoutMs: number, callback: (tx: DbTransac
 }
 
 /**
- * ✅ CORRECTION BLOC 1: Utilisation d'un Proxy pour déléguer vers dbManager.db
+ * ✅ BLOC 1 CORRIGÉ: Accès direct à dbManager.db — proxy mock supprimé
+ * La logique DB_ENABLED=false a été entièrement supprimée.
+ * Toutes les opérations interagissent avec la base de données réelle.
  */
 export const db: DrizzleDB = new Proxy({} as DrizzleDB, {
   get(_target, prop) {
-    if (process.env['DB_ENABLED'] === "false") {
-      return () => { 
-          if (prop === 'select' || prop === 'insert' || prop === 'update' || prop === 'delete') {
-              return { from: () => ({ where: () => ({ limit: () => ({ orderBy: () => [] }) }) }), values: () => ({ returning: () => [] }) };
-          }
-          return []; 
-      };
-    }
     const database = dbManager.db;
     return (database as unknown as Record<string | symbol, unknown>)[prop as string];
   }
@@ -94,9 +84,6 @@ export const db: DrizzleDB = new Proxy({} as DrizzleDB, {
 // ============================================
 
 export async function createUser(user: schema.InsertUser): Promise<schema.User[]> {
-  if (process.env['DB_ENABLED'] === "false") {
-      return [{ id: Date.now(), ...user, createdAt: new Date(), updatedAt: new Date() } as any];
-  }
   const database = getDbInstance();
   try {
     return await database.insert(schema.users).values(user).returning();
@@ -106,15 +93,32 @@ export async function createUser(user: schema.InsertUser): Promise<schema.User[]
   }
 }
 
+/**
+ * FIX MED-4: upsertUser — { ...user } écrasait le role et les champs sensibles
+ *   Avant: set: { ...user } — si l'utilisateur change son name/email via OAuth,
+ *          cela écrase aussi son role, son plan, son statut d'abonnement, etc.
+ *   Après: seuls les champs non-sensibles sont mis à jour (name, email, lastSignedIn).
+ *          Le role n'est JAMAIS mis à jour depuis upsertUser (modification uniquement via admin).
+ */
 export async function upsertUser(user: schema.InsertUser): Promise<void> {
-  if (process.env['DB_ENABLED'] === "false") return;
   const database = getDbInstance();
   try {
+    // FIX MED-4: extraire uniquement les champs non-sensibles pour l'update
+    // Le 'role' N'EST PAS inclus dans le set → il ne sera jamais écrasé au login
+    const { role: _ignoredRole, ...safeUpdateFields } = user as any;
+
+    const updateSet: Record<string, unknown> = {
+      lastSignedIn: safeUpdateFields.lastSignedIn ?? new Date(),
+    };
+    if (safeUpdateFields.name) updateSet['name'] = safeUpdateFields.name;
+    if (safeUpdateFields.email !== undefined) updateSet['email'] = safeUpdateFields.email;
+    if (safeUpdateFields.loginMethod) updateSet['loginMethod'] = safeUpdateFields.loginMethod;
+
     await database.insert(schema.users)
       .values(user)
       .onConflictDoUpdate({
         target: schema.users.openId,
-        set: { ...user } as any
+        set: updateSet as any,
       });
   } catch (error: unknown) {
     logger.error("[DB] Failed to upsert user", { error: error instanceof Error ? error.message : String(error) });
@@ -123,32 +127,18 @@ export async function upsertUser(user: schema.InsertUser): Promise<void> {
 }
 
 export async function getUserByEmail(email: string): Promise<schema.User | undefined> {
-  if (process.env['DB_ENABLED'] === "false") {
-    return {
-      id: 1,
-      openId: "admin-openid",
-      email: "admin@servicall.com",
-      name: "Admin Demo",
-      role: "admin",
-      passwordHash: "$2b$12$Dl3SCpsUaGVGzavR8vJDCevwq9MHfBNmJGIyiglcE87hKWgqd8qpu",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as schema.User;
-  }
   const database = getDbInstance();
   const result = await database.select().from(schema.users).where(eq(schema.users.email, email)).limit(1);
   return result[0] ?? undefined;
 }
 
 export async function getUserById(id: number): Promise<schema.User | undefined> {
-  if (process.env['DB_ENABLED'] === "false") return getUserByEmail("admin@servicall.com");
   const database = getDbInstance();
   const result = await database.select().from(schema.users).where(eq(schema.users.id, id)).limit(1);
   return result[0] ?? undefined;
 }
 
 export async function getUserByOpenId(openId: string): Promise<schema.User | undefined> {
-  if (process.env['DB_ENABLED'] === "false") return getUserByEmail("admin@servicall.com");
   const database = getDbInstance();
   const result = await database.select().from(schema.users).where(eq(schema.users.openId, openId)).limit(1);
   return result[0] ?? undefined;
@@ -161,7 +151,6 @@ export async function getUserByOpenId(openId: string): Promise<schema.User | und
 // ============================================
 
 export async function getWorkflowById(id: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { id, tenantId, name: "Demo Workflow", description: "", triggerType: "manual", triggerConfig: {}, actions: [], isActive: true, createdAt: new Date(), updatedAt: new Date() };
   const database = getDbInstance();
   return await database.query.workflows.findFirst({
     where: and(eq(schema.workflows.id, id), eq(schema.workflows.tenantId, tenantId)),
@@ -169,14 +158,12 @@ export async function getWorkflowById(id: number, tenantId: number) {
 }
 
 export async function createWorkflow(data: schema.InsertWorkflow) {
-  if (process.env.DB_ENABLED === 'false') return { id: 1, ...data };
   const database = getDbInstance();
   const result = await database.insert(schema.workflows).values(data).returning();
   return result[0];
 }
 
 export async function updateWorkflow(id: number, tenantId: number, data: Partial<schema.InsertWorkflow>) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   const result = await database.update(schema.workflows)
     .set({ ...data, updatedAt: new Date() })
@@ -187,7 +174,6 @@ export async function updateWorkflow(id: number, tenantId: number, data: Partial
 }
 
 export async function deleteWorkflow(id: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   const result = await database.delete(schema.workflows)
     .where(and(eq(schema.workflows.id, id), eq(schema.workflows.tenantId, tenantId)))
@@ -197,7 +183,6 @@ export async function deleteWorkflow(id: number, tenantId: number) {
 }
 
 export async function getWorkflowsByTenant(tenantId: number, limit = 50, offset = 0) {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   return await database.select().from(schema.workflows)
     .where(eq(schema.workflows.tenantId, tenantId))
@@ -210,14 +195,12 @@ export async function getWorkflowsByTenant(tenantId: number, limit = 50, offset 
 // TENANT / USER MANAGEMENT EXTENSIONS
 
 export async function getTenantById(tenantId: number): Promise<schema.Tenant | undefined> {
-  if (process.env['DB_ENABLED'] === "false") return { id: 1, name: "Demo Tenant", slug: "demo", isActive: true } as any;
   const database = getDbInstance();
   const result = await database.select().from(schema.tenants).where(eq(schema.tenants.id, tenantId)).limit(1);
   return result[0] ?? undefined;
 }
 
 export async function getUserRoleInTenant(userId: number, tenantId: number): Promise<string | null> {
-  if (process.env['DB_ENABLED'] === "false") return "owner";
   const database = getDbInstance();
   const result = await database
     .select({ role: schema.tenantUsers.role })
@@ -237,15 +220,6 @@ export async function getUserTenants(userId: number): Promise<Array<{
   role: string | null;
   isActive: boolean | null;
 }>> {
-  if (process.env['DB_ENABLED'] === "false") {
-    return [{
-      id: 1,
-      name: "Espace Démo",
-      slug: "demo",
-      role: "owner",
-      isActive: true
-    }];
-  }
   const database = getDbInstance();
   return await database
     .select({
@@ -267,7 +241,6 @@ export async function getTenantMembers(tenantId: number): Promise<Array<{
   role: string | null;
   isActive: boolean | null;
 }>> {
-  if (process.env["DB_ENABLED"] === "false") return [{ id: 1, name: "Admin Demo", email: "admin@servicall.com", role: "owner", isActive: true }];
   const database = getDbInstance();
   return await database
     .select({
@@ -289,7 +262,6 @@ export async function getTenantMemberById(userId: number, tenantId: number): Pro
   role: string | null;
   isActive: boolean | null;
 } | undefined> {
-  if (process.env["DB_ENABLED"] === "false") return { id: userId, name: "Demo User", email: "demo@servicall.com", role: "agent", isActive: true };
   const database = getDbInstance();
   const result = await database
     .select({
@@ -307,7 +279,6 @@ export async function getTenantMemberById(userId: number, tenantId: number): Pro
 }
 
 export async function addUserToTenant(userId: number, tenantId: number, role: string = "agent"): Promise<schema.TenantUser> {
-  if (process.env['DB_ENABLED'] === "false") return { userId, tenantId, role, isActive: true } as any;
   const database = getDbInstance();
   try {
     const [result] = await database.insert(schema.tenantUsers).values({
@@ -324,7 +295,6 @@ export async function addUserToTenant(userId: number, tenantId: number, role: st
 }
 
 export async function createTenant(tenant: schema.InsertTenant): Promise<schema.Tenant[]> {
-  if (process.env['DB_ENABLED'] === "false") return [{ id: Date.now(), ...tenant, isActive: true } as any];
   const database = getDbInstance();
   try {
     return await database.insert(schema.tenants).values(tenant).returning();
@@ -339,7 +309,6 @@ export async function createTenant(tenant: schema.InsertTenant): Promise<schema.
 // Les fonctions de dashboard, prospects, calls, etc. doivent aussi être mockées.
 
 export async function getProspectsByTenant(tenantId: number, limit = 50, offset = 0, userId?: number): Promise<schema.Prospect[]> {
-  if (process.env['DB_ENABLED'] === "false") return [];
   const database = getDbInstance();
   const condition = userId
     ? and(eq(schema.prospects.tenantId, tenantId), eq(schema.prospects.assignedTo, userId))
@@ -352,27 +321,16 @@ export async function getProspectsByTenant(tenantId: number, limit = 50, offset 
 }
 
 export async function getCallsByTenant(tenantId: number): Promise<schema.Call[]> {
-  if (process.env['DB_ENABLED'] === "false") return [];
   const database = getDbInstance();
   return await database.select().from(schema.calls).where(eq(schema.calls.tenantId, tenantId)).orderBy(desc(schema.calls.createdAt));
 }
 
 export async function getAppointmentsByTenant(tenantId: number): Promise<schema.Appointment[]> {
-  if (process.env['DB_ENABLED'] === "false") return [];
   const database = getDbInstance();
   return await database.select().from(schema.appointments).where(eq(schema.appointments.tenantId, tenantId)).orderBy(desc(schema.appointments.startTime));
 }
 
-export async function getTeamPerformanceMetrics(_tenantId: number, _timeRange: string): Promise<{ avgQualityScore: number; conversionRate: number; sentimentRate: number }> {
-  return { avgQualityScore: 85.5, conversionRate: 12.3, sentimentRate: 78.2 };
-}
-
-export async function getAtRiskAgents(_tenantId: number): Promise<any[]> {
-  return [];
-}
-
 export async function countTodayAppointments(tenantId: number, agentId?: number): Promise<number> {
-  if (process.env.DB_ENABLED === 'false') return 0;
   const database = getDbInstance();
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
@@ -391,8 +349,35 @@ export async function countTodayAppointments(tenantId: number, agentId?: number)
   return result[0]?.value ?? 0;
 }
 
-export async function getBadgeCount(_tenantId: number, _table: string): Promise<number> {
-  return 10;
+export async function getBadgeCount(tenantId: number, table: string): Promise<number> {
+  const database = getDbInstance();
+  let count = 0;
+  
+  try {
+    if (table === 'calls') {
+      const [result] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(schema.calls)
+        .where(and(eq(schema.calls.tenantId, tenantId), eq(schema.calls.status, 'scheduled')));
+      count = result?.count ?? 0;
+    } else if (table === 'appointments') {
+      const [result] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(schema.appointments)
+        .where(and(eq(schema.appointments.tenantId, tenantId), eq(schema.appointments.status, 'scheduled')));
+      count = result?.count ?? 0;
+    } else if (table === 'tasks') {
+      const [result] = await database
+        .select({ count: sql<number>`count(*)::int` })
+        .from(schema.tasks)
+        .where(and(eq(schema.tasks.tenantId, tenantId), eq(schema.tasks.status, 'pending')));
+      count = result?.count ?? 0;
+    }
+    return count;
+  } catch (error) {
+    logger.error(`[DB] Failed to get badge count for ${table}`, { error, tenantId });
+    return 0;
+  }
 }
 
 // ============================================
@@ -400,21 +385,6 @@ export async function getBadgeCount(_tenantId: number, _table: string): Promise<
 // ============================================
 
 export async function getProspectById(id: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') {
-    // Logique de données mockées pour le mode démo
-    return {
-      id,
-      tenantId,
-      firstName: "John",
-      lastName: "Doe",
-      email: "john.doe@example.com",
-      phone: "+1234567890",
-      status: "active",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      // Ajouter d'autres champs pertinents pour un prospect
-    };
-  }
   const database = getDbInstance();
   return await database.query.prospects.findFirst({
     where: and(eq(schema.prospects.id, id), eq(schema.prospects.tenantId, tenantId)),
@@ -422,20 +392,6 @@ export async function getProspectById(id: number, tenantId: number) {
 }
 
 export async function getCallById(id: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') {
-    // Logique de données mockées pour le mode démo
-    return {
-      id,
-      tenantId,
-      prospectId: 1, // ID de prospect mocké
-      duration: 300, // en secondes
-      status: "completed",
-      recordingUrl: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      // Ajouter d'autres champs pertinents pour un appel
-    };
-  }
   const database = getDbInstance();
   return await database.query.calls.findFirst({
     where: and(eq(schema.calls.id, id), eq(schema.calls.tenantId, tenantId)),
@@ -443,13 +399,11 @@ export async function getCallById(id: number, tenantId: number) {
 }
 
 export async function updateCall(id: number, data: Partial<typeof schema.calls.$inferInsert>, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { success: true, message: "Call updated in demo mode" };
   const database = getDbInstance();
   return await database.update(schema.calls).set(data).where(and(eq(schema.calls.id, id), eq(schema.calls.tenantId, tenantId)));
 }
 
 export async function updateProspect(id: number, data: Partial<typeof schema.prospects.$inferInsert>, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { success: true, message: "Prospect updated in demo mode" };
   const database = getDbInstance();
   return await database.update(schema.prospects).set(data).where(and(eq(schema.prospects.id, id), eq(schema.prospects.tenantId, tenantId)));
 }
@@ -458,7 +412,6 @@ export async function createCall(data: typeof schema.calls.$inferInsert, tenantI
   // tenantId peut être passé dans data ou en second argument (compatibilité avec tous les appelants).
   // On privilégie le second argument s'il est fourni, sinon on utilise data.tenantId.
   const resolvedTenantId = tenantId ?? data.tenantId;
-  if (process.env.DB_ENABLED === 'false') return { id: Math.floor(Math.random() * 1000), ...data, tenantId: resolvedTenantId };
   const database = getDbInstance();
   // BUG-M2 FIX: Déstructurer le tableau .returning() pour toujours retourner un objet unique,
   // cohérent avec le mode mock et l'accès à .id dans le router.
@@ -467,7 +420,6 @@ export async function createCall(data: typeof schema.calls.$inferInsert, tenantI
 }
 
 export async function createProspect(data: typeof schema.prospects.$inferInsert, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { id: Math.floor(Math.random() * 1000), ...data, tenantId };
   const database = getDbInstance();
   return await database.insert(schema.prospects).values({ ...data, tenantId }).returning();
 }
@@ -477,14 +429,12 @@ export async function createProspect(data: typeof schema.prospects.$inferInsert,
 // ============================================
 
 export async function createProspectOptimized(data: typeof schema.prospects.$inferInsert, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { id: Math.floor(Math.random() * 1000), ...data, tenantId };
   const database = getDbInstance();
   const [result] = await database.insert(schema.prospects).values({ ...data, tenantId }).returning();
   return result;
 }
 
 export async function deleteProspect(prospectId: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   await database.delete(schema.prospects).where(
     and(eq(schema.prospects.id, prospectId), eq(schema.prospects.tenantId, tenantId))
@@ -493,7 +443,6 @@ export async function deleteProspect(prospectId: number, tenantId: number) {
 }
 
 export async function getCallsByProspect(prospectId: number, tenantId: number): Promise<schema.Call[]> {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   return await database.select().from(schema.calls).where(
     and(eq(schema.calls.prospectId, prospectId), eq(schema.calls.tenantId, tenantId))
@@ -505,7 +454,6 @@ export async function getCallsByProspect(prospectId: number, tenantId: number): 
 // ============================================
 
 export async function deleteCall(callId: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   const result = await database.delete(schema.calls)
     .where(and(eq(schema.calls.id, callId), eq(schema.calls.tenantId, tenantId)))
@@ -515,7 +463,6 @@ export async function deleteCall(callId: number, tenantId: number) {
 }
 
 export async function countPendingCalls(tenantId: number, agentId?: number): Promise<number> {
-  if (process.env.DB_ENABLED === 'false') return 0;
   const database = getDbInstance();
   const condition = agentId
     ? and(
@@ -538,14 +485,12 @@ export async function countPendingCalls(tenantId: number, agentId?: number): Pro
 // TENANT MANAGEMENT// ============================================
 
 export async function createTask(data: schema.InsertTask) {
-  if (process.env.DB_ENABLED === 'false') return { id: 1, ...data };
   const database = getDbInstance();
   const result = await database.insert(schema.tasks).values(data).returning();
   return result[0];
 }
 
 export async function getTasksByTenant(tenantId: number, limit = 50, offset = 0) {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   return await database.select().from(schema.tasks)
     .where(eq(schema.tasks.tenantId, tenantId))
@@ -555,7 +500,6 @@ export async function getTasksByTenant(tenantId: number, limit = 50, offset = 0)
 }
 
 export async function updateTask(id: number, tenantId: number, data: Partial<schema.InsertTask>) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   const result = await database.update(schema.tasks)
     .set({ ...data, updatedAt: new Date() })
@@ -566,7 +510,6 @@ export async function updateTask(id: number, tenantId: number, data: Partial<sch
 }
 
 export async function deleteTask(id: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   const result = await database.delete(schema.tasks)
     .where(and(eq(schema.tasks.id, id), eq(schema.tasks.tenantId, tenantId)))
@@ -580,26 +523,6 @@ export async function deleteTask(id: number, tenantId: number) {
 // ============================================
 
 export async function getAppointmentById(id: number, tenantId: number): Promise<schema.Appointment | undefined> {
-  if (process.env.DB_ENABLED === 'false') {
-    return {
-      id,
-      tenantId,
-      title: 'Demo Appointment',
-      startTime: new Date(),
-      endTime: new Date(Date.now() + 3600000),
-      status: 'scheduled',
-      type: 'call',
-      prospectId: null,
-      userId: null,
-      description: null,
-      location: null,
-      meetingUrl: null,
-      notes: null,
-      metadata: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as schema.Appointment;
-  }
   const database = getDbInstance();
   const result = await database.select().from(schema.appointments).where(
     and(eq(schema.appointments.id, id), eq(schema.appointments.tenantId, tenantId))
@@ -608,16 +531,12 @@ export async function getAppointmentById(id: number, tenantId: number): Promise<
 }
 
 export async function createAppointment(data: typeof schema.appointments.$inferInsert) {
-  if (process.env.DB_ENABLED === 'false') {
-    return { id: Math.floor(Math.random() * 1000), ...data, createdAt: new Date(), updatedAt: new Date() };
-  }
   const database = getDbInstance();
   const [result] = await database.insert(schema.appointments).values(data).returning();
   return result;
 }
 
 export async function updateAppointment(id: number, tenantId: number, data: Partial<typeof schema.appointments.$inferInsert>) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   const [result] = await database.update(schema.appointments)
     .set({ ...data, updatedAt: new Date() })
@@ -628,7 +547,6 @@ export async function updateAppointment(id: number, tenantId: number, data: Part
 }
 
 export async function deleteAppointment(id: number, tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   await database.delete(schema.appointments).where(
     and(eq(schema.appointments.id, id), eq(schema.appointments.tenantId, tenantId))
@@ -641,19 +559,6 @@ export async function deleteAppointment(id: number, tenantId: number) {
 // ============================================
 
 export async function getSubscriptionByTenant(tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') {
-    return {
-      id: 1,
-      tenantId,
-      plan: 'pro' as const,
-      status: 'active',
-      stripeSubscriptionId: null,
-      currentPeriodStart: new Date(),
-      currentPeriodEnd: new Date(Date.now() + 30 * 24 * 3600000),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-  }
   const database = getDbInstance();
   const result = await database.select().from(schema.subscriptions)
     .where(eq(schema.subscriptions.tenantId, tenantId))
@@ -663,7 +568,6 @@ export async function getSubscriptionByTenant(tenantId: number) {
 }
 
 export async function getInvoicesByTenant(tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   return await database.select().from(schema.invoices)
     .where(eq(schema.invoices.tenantId, tenantId))
@@ -679,7 +583,6 @@ export async function createStripeEvent(data: {
   status?: string;
   tenantId?: number;
 }) {
-  if (process.env.DB_ENABLED === 'false') return { id: Math.floor(Math.random() * 1000) };
   const database = getDbInstance();
   const eventId = data.stripeEventId ?? data.eventId ?? `evt_${Date.now()}`;
   const eventType = data.type ?? data.eventType ?? 'unknown';
@@ -698,7 +601,6 @@ export async function createStripeEvent(data: {
 // au moment de leur réception. Le tenantId est résolu lors du traitement via le payload.
 // Aucun filtre tenant n'est ajouté ici pour ne pas casser le worker.
 export async function getPendingStripeEvents() {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   return await database.select().from(schema.stripeEvents).where(eq(schema.stripeEvents.processed, false)).orderBy(desc(schema.stripeEvents.createdAt));
 }
@@ -707,7 +609,6 @@ export async function getPendingStripeEvents() {
 // BUG-1 FIX: le worker passe eventRecord.id (number, clé primaire) et non eventRecord.eventId (string Stripe).
 // La signature accepte maintenant un id number (PK) pour le WHERE, et un processed boolean strict.
 export async function updateStripeEventStatus(id: number, processed: boolean) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   await database.update(schema.stripeEvents)
     .set({ processed, processedAt: processed ? new Date() : null })
@@ -716,7 +617,6 @@ export async function updateStripeEventStatus(id: number, processed: boolean) {
 }
 
 export async function updateSubscriptionByStripeId(stripeSubscriptionId: string, data: Partial<typeof schema.subscriptions.$inferInsert>) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   await database.update(schema.subscriptions)
     .set({ ...data, updatedAt: new Date() })
@@ -725,7 +625,6 @@ export async function updateSubscriptionByStripeId(stripeSubscriptionId: string,
 }
 
 export async function updateInvoiceByStripeId(invoiceNumber: string, data: Partial<typeof schema.invoices.$inferInsert>) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   await database.update(schema.invoices)
     .set(data)
@@ -737,9 +636,6 @@ export async function updateInvoiceByStripeId(invoiceNumber: string, data: Parti
 // ============================================
 
 export async function getTenantUsers(tenantId: number) {
-  if (process.env.DB_ENABLED === 'false') {
-    return [{ id: 1, name: 'Admin Demo', email: 'admin@servicall.com', role: 'owner', isActive: true }];
-  }
   const database = getDbInstance();
   return await database
     .select({
@@ -755,7 +651,6 @@ export async function getTenantUsers(tenantId: number) {
 }
 
 export async function updateTenant(tenantId: number, data: Partial<typeof schema.tenants.$inferInsert>) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
   const database = getDbInstance();
   await database.update(schema.tenants)
     .set({ ...data, updatedAt: new Date() })
@@ -763,28 +658,18 @@ export async function updateTenant(tenantId: number, data: Partial<typeof schema
   return { success: true };
 }
 
-export async function updateTenantUser(userId: number, tenantId: number, data: { role?: string; isActive?: boolean }) {
-  if (process.env.DB_ENABLED === 'false') return { success: true };
-  const database = getDbInstance();
-  await database.update(schema.tenantUsers)
-    .set(data)
-    .where(and(eq(schema.tenantUsers.userId, userId), eq(schema.tenantUsers.tenantId, tenantId)));
-  return { success: true };
-}
 
 // ============================================
 // AUDIT LOGS MANAGEMENT
 // ============================================
 
 export async function createAuditLog(data: schema.InsertAuditLog) {
-  if (process.env.DB_ENABLED === 'false') return { id: 1, ...data };
   const database = getDbInstance();
   const result = await database.insert(schema.auditLogs).values(data).returning();
   return result[0];
 }
 
 export async function getAuditLogsByTenant(tenantId: number, limit = 100) {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   return await database.select().from(schema.auditLogs)
     .where(eq(schema.auditLogs.tenantId, tenantId))
@@ -793,7 +678,6 @@ export async function getAuditLogsByTenant(tenantId: number, limit = 100) {
 }
 
 export async function getAuditLogsByUser(userId: number, limit = 100) {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   return await database.select().from(schema.auditLogs)
     .where(eq(schema.auditLogs.userId, userId))
@@ -813,7 +697,6 @@ export async function getAgentPerformanceMetrics(tenantId: number): Promise<Arra
   avgQualityScore: number;
   conversionRate: number;
 }>> {
-  if (process.env.DB_ENABLED === 'false') return [];
   const database = getDbInstance();
   const results = await database
     .select({
@@ -869,21 +752,59 @@ export async function saveTenantIndustryConfig(tenantId: number, config: Record<
 }
 
 export async function getTeamPerformanceMetrics(tenantId: number, timeRange: string): Promise<{ avgQualityScore: number; conversionRate: number; sentimentRate: number }> {
-  if (process.env["DB_ENABLED"] === "false") return { avgQualityScore: 85.5, conversionRate: 12.3, sentimentRate: 78.2 };
-  // In a real application, this would query the database for actual KPIs based on tenantId and timeRange
-  // For now, return mock data
-  return { avgQualityScore: 85.5, conversionRate: 12.3, sentimentRate: 78.2 };
+  // ✅ BLOC 1: DB_ENABLED guard supprimé — requête réelle
+  const database = getDbInstance();
+  const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : timeRange === '90d' ? 90 : 30;
+  const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+  const results = await database
+    .select({
+      avgQualityScore: sql<number>`coalesce(avg(${schema.calls.qualityScore}), 0)::float`,
+      totalCalls: sql<number>`count(${schema.calls.id})::int`,
+      convertedCalls: sql<number>`count(case when ${schema.calls.status} = 'completed' then 1 end)::int`,
+    })
+    .from(schema.calls)
+    .where(and(
+      eq(schema.calls.tenantId, tenantId),
+      sql`${schema.calls.createdAt} >= ${since}`
+    ));
+  const row = results[0];
+  const avgQualityScore = row?.avgQualityScore ?? 0;
+  const totalCalls = row?.totalCalls ?? 0;
+  const convertedCalls = row?.convertedCalls ?? 0;
+  const conversionRate = totalCalls > 0 ? (convertedCalls / totalCalls) * 100 : 0;
+  return {
+    avgQualityScore: Math.round(avgQualityScore * 10) / 10,
+    conversionRate: Math.round(conversionRate * 10) / 10,
+    sentimentRate: 0, // Calculé séparément via analyse IA
+  };
 }
 
 export async function getAtRiskAgents(tenantId: number): Promise<Array<{ id: number; name: string; email: string }>> {
-  if (process.env["DB_ENABLED"] === "false") return [{ id: 1, name: "Agent Smith", email: "smith@example.com" }];
-  // In a real application, this would query the database for agents at risk based on tenantId
-  // For now, return mock data
-  return [];
+  // ✅ BLOC 1: DB_ENABLED guard supprimé — requête réelle
+  // Un agent est "à risque" si son score qualité moyen est inférieur à 60 sur les 7 derniers jours
+  const database = getDbInstance();
+  const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+  const results = await database
+    .select({
+      id: schema.users.id,
+      name: schema.users.name,
+      email: schema.users.email,
+      avgScore: sql<number>`coalesce(avg(${schema.calls.qualityScore}), 0)::float`,
+    })
+    .from(schema.calls)
+    .innerJoin(schema.users, eq(schema.calls.agentId, schema.users.id))
+    .where(and(
+      eq(schema.calls.tenantId, tenantId),
+      sql`${schema.calls.createdAt} >= ${since}`
+    ))
+    .groupBy(schema.users.id, schema.users.name, schema.users.email)
+    .having(sql`avg(${schema.calls.qualityScore}) < 60`);
+  return results
+    .filter(r => r.id !== null)
+    .map(r => ({ id: r.id!, name: r.name ?? 'Agent', email: r.email }));
 }
 
 export async function deleteTenantUser(userId: number, tenantId: number): Promise<void> {
-  if (process.env["DB_ENABLED"] === "false") return;
   const database = getDbInstance();
   try {
     const result = await database.delete(schema.tenantUsers)
@@ -897,7 +818,6 @@ export async function deleteTenantUser(userId: number, tenantId: number): Promis
 }
 
 export async function updateTenantUser(userId: number, tenantId: number, data: Partial<schema.InsertTenantUser>): Promise<void> {
-  if (process.env["DB_ENABLED"] === "false") return;
   const database = getDbInstance();
   try {
     const result = await database.update(schema.tenantUsers)

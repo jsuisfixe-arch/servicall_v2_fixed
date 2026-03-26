@@ -73,19 +73,16 @@ export const tenantProcedure = baseTenantProcedure
     // BLOC 2: Définir le contexte RLS pour cette requête
     // ✅ FIX TIMEOUT: setTenantContext utilise maintenant db.execute() via Drizzle
     // qui libère correctement la connexion au pool après exécution
-    if (process.env['DB_ENABLED'] !== "false") {
-      try {
-        await setTenantContext(tenantId);
-      } catch (error: any) {
-        // FAIL-CLOSED: En cas d'échec RLS, bloquer la requête pour garantir l'isolation tenant.
-        // Ne jamais continuer sans contexte RLS établi — les WHERE clauses seules ne suffisent pas
-        // car le RLS PostgreSQL constitue une couche de défense en profondeur indépendante.
-        logger.error("[RLS] setTenantContext échoué — requête bloquée (fail-closed)", { error, tenantId });
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Impossible d'établir le contexte de sécurité tenant. Réessayez.",
-        });
-      }
+    // ✅ BLOC 1: DB_ENABLED guard supprimé — RLS toujours actif en production
+    // FAIL-CLOSED: En cas d'échec RLS, bloquer la requête pour garantir l'isolation tenant.
+    try {
+      await setTenantContext(tenantId);
+    } catch (error: any) {
+      logger.error("[RLS] setTenantContext échoué — requête bloquée (fail-closed)", { error, tenantId });
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Impossible d'établir le contexte de sécurité tenant. Réessayez.",
+      });
     }
 
     return next({

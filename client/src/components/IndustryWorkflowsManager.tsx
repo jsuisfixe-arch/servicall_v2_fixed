@@ -100,12 +100,12 @@ export function IndustryWorkflowsManager({
     try {
       // Importer tous les workflows sélectionnés en parallèle
       await Promise.all(
-        selectedWorkflows.map((blueprintId) =>
-          importBlueprintMutation.mutateAsync({
-            tenantId: parseInt(tenantId.toString()),
-            blueprintId,
-          })
-        )
+        selectedWorkflows.map((blueprintId) => {
+          const id = typeof blueprintId === 'string' ? parseInt(blueprintId) : blueprintId;
+          return importBlueprintMutation.mutateAsync({
+            blueprintId: id,
+          });
+        })
       );
     } catch (err) {
       console.error("Failed to import workflows:", err);

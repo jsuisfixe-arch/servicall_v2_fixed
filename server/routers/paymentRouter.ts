@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure, publicProcedure } from "../procedures";
+import { router, tenantProcedure, publicProcedure } from "../procedures";
 import { TRPCError } from "@trpc/server";
 import Stripe from "stripe";
 import { InvoiceService } from "../services/invoiceService";
@@ -300,7 +300,7 @@ export const paymentRouter = router({
    * Annule un Payment Intent
    * Endpoint PROTECTED (authentification requise)
    */
-  cancelPayment: protectedProcedure
+  cancelPayment: tenantProcedure
     .input(
       z.object({
         paymentIntentId: z.string(),
@@ -363,7 +363,7 @@ export const paymentRouter = router({
    * Récupère l'historique des paiements d'une facture
    * Endpoint PROTECTED (authentification requise)
    */
-  getPaymentHistory: protectedProcedure
+  getPaymentHistory: tenantProcedure
     .input(
       z.object({
         invoiceId: z.number().int().positive(),

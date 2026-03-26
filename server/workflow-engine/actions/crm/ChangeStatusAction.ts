@@ -5,10 +5,10 @@
 
 import { z } from "zod";
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
+import type { FinalExecutionContext } from "../structured-types";
 import { getDb, prospects } from "../../../db";
 import { eq } from "drizzle-orm";
-import { Logger } from "../../utils/Logger";
+import { Logger } from "../../infrastructure/logger";
 import { IdempotencyService } from "../../utils/IdempotencyService";
 import { StateMachineEngine, ProspectStateMachine, ProspectStatus } from "../../state-machine/StateMachine";
 import { AuditService } from "../../../services/auditService";

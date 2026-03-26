@@ -7,6 +7,7 @@ import { withScope, setTag, captureException as sentryCaptureException } from "@
 /**
  * Service de gestion des queues asynchrones avec BullMQ
  * Permet de traiter les tâches longues en arrière-plan
+ * ✅ BLOC 2: Extension des types de jobs (LeadExtraction, LeadImport)
  */
 
 // ✅ Variables globales pour les queues
@@ -73,7 +74,6 @@ function createQueue(queueName: QueueType): Queue | null {
         backoff: { type: "exponential", delay: 5000 },
         removeOnComplete: { age: 3600 },
         removeOnFail: { age: 86400 },
-        // ✅ Ajout de l'idempotence par défaut via jobId si non spécifié
       },
     });
   } catch (error: any) {
@@ -161,9 +161,32 @@ export function registerWorker(
     });
 
     worker.on("completed", (job) => logger.info(`[QueueService] Job completed`, { queueName, jobId: job.id }));
-    worker.on("failed", (job, err) => {
+    worker.on("failed", async (job, err) => {
       logger.error(`[QueueService] Job failed`, { queueName, jobId: job?.id, error: err.message });
       
+      // ✅ BLOC 2: Enregistrer dans workflowDeadLetters
+      if (job) {
+        try {
+          const dbMod = await import("../db");
+          const database = await dbMod.getDb();
+          if (database) {
+            const { workflowDeadLetters } = await import("../../drizzle/schema");
+            await database.insert(workflowDeadLetters).values({
+              tenantId: job.data.tenantId || 0,
+              jobId: job.id || "unknown",
+              queueName: queueName,
+              payload: job.data,
+              error: err.message,
+              stack: err.stack,
+              attempts: job.attemptsMade,
+              status: "failed",
+            });
+          }
+        } catch (dbErr) {
+          logger.error("[QueueService] Failed to log dead letter", dbErr);
+        }
+      }
+
       // ✅ Bloc 9: Metrics BullMQ
       import("./metricsService").then(m => m.bullmqJobsFailed.labels(queueName).inc());
 
@@ -220,21 +243,56 @@ export async function initializeWorkers() {
   const hasTwilio = Boolean(process.env['TWILIO_ACCOUNT_SID'] && process.env['TWILIO_AUTH_TOKEN']);
   const hasStripe = Boolean(process.env['STRIPE_SECRET_KEY']);
 
-  // Enregistrement des workers (logique métier préservée)
+  // Enregistrement des workers
   if (hasTwilio) {
     registerWorker("sms-campaigns", async (job) => ({ sent: job.data.phoneNumbers.length }));
   }
-  registerWorker("email-campaigns", async (job) => ({ sent: job.data.emails.length }));
+
+  // Worker Email (Générique)
+  registerWorker("email-campaigns", async (job) => {
+    const { sendEmailInternal } = await import("./notificationService");
+    if (job.data.type === "appointment-confirmation") {
+      const { to, appointment } = job.data;
+      const html = `<div>Rendez-vous : ${appointment.title}</div>`; // Simplifié pour l'exemple
+      await sendEmailInternal({ to, subject: `Confirmation: ${appointment.title}`, html });
+    } else {
+      await sendEmailInternal({ 
+        to: job.data.to, 
+        subject: job.data.subject, 
+        html: job.data.html || job.data.text 
+      });
+    }
+    return { success: true };
+  });
+
   if (hasOpenAI) {
-    registerWorker("call-analysis", async (job) => ({ callId: job.data.callId, analyzed: true }));
+    registerWorker("call-analysis", async (job) => {
+      const { CallScoringService } = await import("./callScoringService");
+      await CallScoringService.scoreCall(job.data.callId);
+      return { callId: job.data.callId, analyzed: true };
+    });
     registerWorker("ai-transcription", async (job) => ({ callId: job.data.callId, transcribed: true }));
     registerWorker("sentiment-analysis", async (job) => ({ callId: job.data.callId, sentiment: "neutral" }));
   }
-  registerWorker("report-generation", async (job) => ({ reportType: job.data.reportType, generated: true }));
+
+  // Worker Report & Lead Extraction
+  registerWorker("report-generation", async (job) => {
+    if (job.data.type === "lead-extraction") {
+      const { searchBusinesses } = await import("./leadExtractionService");
+      return await searchBusinesses({ ...job.data.params, tenantId: job.data.tenantId });
+    } else if (job.data.type === "lead-import") {
+      const { importBusinessesAsProspects } = await import("./leadExtractionService");
+      return await importBusinessesAsProspects(job.data.businesses, job.data.tenantId, job.data.extractionId);
+    }
+    return { reportType: job.data.reportType, generated: true };
+  });
+
   registerWorker("appointment-reminders", async (job) => ({ appointmentId: job.data.appointmentId, sent: true }));
+  
   if (hasStripe) {
     registerWorker("invoice-generation", async (job) => ({ invoiceId: job.data.invoiceId, generated: true }));
   }
+
   if (hasTwilio) {
     registerWorker("outbound-calls", async (job) => {
       const { createOutboundCallInternal } = await import("./twilioService");

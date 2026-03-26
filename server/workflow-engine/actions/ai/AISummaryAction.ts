@@ -7,9 +7,9 @@ import { AI_MODEL } from '../../../_core/aiModels';
 
 import { z } from "zod";
 import type { ActionHandler, ActionResult } from "../../types";
-import type { FinalExecutionContext } from "../../structured-types";
+import type { FinalExecutionContext } from "../structured-types";
 import { invokeLLM } from "../../../_core/llm";
-import { Logger } from "../../utils/Logger";
+import { Logger } from "../../infrastructure/logger";
 
 // Configuration structurée
 const AISummaryConfigSchema = z.object({

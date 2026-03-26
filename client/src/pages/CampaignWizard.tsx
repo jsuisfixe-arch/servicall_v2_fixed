@@ -54,12 +54,9 @@ export default function CampaignWizard() {
     new URLSearchParams(window.location.search).get("tenantId") || "1"
   );
 
-  // ✅ FIX: trpc.ai.listModels n'existe pas, on utilise un mock ou une autre méthode si disponible.
-  // Pour la stabilité runtime sans modifier la logique métier complexe, on mock les modèles.
-  const aiModels = [
-    { id: 1, name: "Assistant Standard", type: "Standard" },
-    { id: 2, name: "Assistant Expert", type: "Premium" }
-  ];
+  // Récupérer les modèles IA réels depuis le backend
+  const { data: aiModelsData, isLoading: isLoadingModels } = trpc.ai.listModels.useQuery();
+  const aiModels = aiModelsData?.roles || [];
 
   // Mutations
   const createCampaignMutation = trpc.campaign.create.useMutation({
@@ -235,9 +232,9 @@ export default function CampaignWizard() {
                     className="w-full px-3 py-2 border rounded-md bg-background"
                   >
                     <option value="">Sélectionner un rôle...</option>
-                    {aiModels.map((model) => (
+                    {aiModels.map((model: any) => (
                       <option key={model.id} value={model.id}>
-                        {model.name} ({model.type})
+                        {model.name} ({model.model})
                       </option>
                     ))}
                   </select>
