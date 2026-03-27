@@ -201,4 +201,81 @@ router.post("/incoming-call", async (req: Request, res: Response) => {
   }
 });
 
+// ─── Transfer vers agent humain (déclenché par l'IA) ─────────────────────────
+// Appelé via <Redirect> TwiML depuis le pipeline vocal.
+
+router.get("/do-transfer", async (req: Request, res: Response) => {
+  try {
+    const { agentPhone, prospectName, callSid } = req.query as Record<string, string>;
+    const { buildTransferTwiML } = await import("../services/smartTransferService");
+
+    if (!agentPhone) {
+      res.type("text/xml");
+      return res.send('<Response><Say voice="alice" language="fr-FR">Transfert impossible, aucun agent configuré.</Say><Hangup/></Response>');
+    }
+
+    const summary = decodeURIComponent(prospectName ?? "");
+    const twiml = buildTransferTwiML(
+      agentPhone,
+      summary || "Prospect",
+      summary || "Appel entrant",
+      callSid ?? ""
+    );
+
+    logger.info("[Twilio] do-transfer TwiML sent", { agentPhone, callSid });
+    res.type("text/xml");
+    return res.send(twiml);
+  } catch (error: any) {
+    logger.error("[Twilio] Error in do-transfer", error);
+    res.type("text/xml");
+    return res.status(500).send('<Response><Say voice="alice" language="fr-FR">Erreur lors du transfert.</Say><Hangup/></Response>');
+  }
+});
+
+// ─── Fallback transfert (agent ne répond pas) ─────────────────────────────────
+// Déclenché par <Dial action="/api/twilio/transfer-fallback"> si timeout.
+
+router.post("/transfer-fallback", async (req: Request, res: Response) => {
+  try {
+    const { DialCallStatus, CallSid, From } = req.body;
+    const { buildTransferFallbackTwiML, resolveTransfer } = await import("../services/smartTransferService");
+
+    logger.info("[Twilio] Transfer fallback triggered", { DialCallStatus, CallSid });
+
+    // L'agent n'a pas décroché → planifier un rappel automatiquement
+    if (DialCallStatus === "no-answer" || DialCallStatus === "busy" || DialCallStatus === "failed") {
+      // Résoudre le tenant depuis le numéro appelé
+      const tenantId = parseInt(process.env["DEFAULT_TENANT_ID"] ?? "0") || 1;
+
+      // Planifier le rappel en background
+      setImmediate(async () => {
+        try {
+          await resolveTransfer({
+            tenantId,
+            callSid: CallSid,
+            prospectPhone: From ?? "",
+            trigger: "caller_request",
+            conversationSummary: "Appelant a demandé un transfert humain mais l'agent n'était pas disponible.",
+            preferredCallbackDelayMinutes: 30,
+          });
+        } catch (err) {
+          logger.error("[Twilio] Fallback callback scheduling failed", { err });
+        }
+      });
+
+      const twiml = buildTransferFallbackTwiML("", 30);
+      res.type("text/xml");
+      return res.send(twiml);
+    }
+
+    // Sinon (completed, etc.) — raccrocher normalement
+    res.type("text/xml");
+    return res.send('<Response><Hangup/></Response>');
+  } catch (error: any) {
+    logger.error("[Twilio] Error in transfer-fallback", error);
+    res.type("text/xml");
+    return res.status(500).send('<Response><Hangup/></Response>');
+  }
+});
+
 export default router;

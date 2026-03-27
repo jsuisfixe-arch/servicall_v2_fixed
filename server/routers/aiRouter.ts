@@ -196,7 +196,22 @@ export const aiRouter = router({
         } else {
           // Sinon, utiliser generateCompletion pour une conversation générique
           const conversationHistory = input.context?.conversationHistory || [];
-          const systemPrompt = `Tu es un assistant IA professionnel pour un centre d'appels. Réponds de manière courtoise, concise et professionnelle en français.`;
+          
+          // Smart-Prompting: Récupérer le prompt système depuis le blueprint si disponible
+          let systemPrompt = `Tu es un assistant IA professionnel pour un centre d'appels. Réponds de manière courtoise, concise et professionnelle en français.`;
+          
+          const db = await import("../db").then(m => m.getDb());
+          if (db) {
+            const tenant = await db.select().from(schema.tenants).where(eq(schema.tenants.id, tenantId)).limit(1);
+            if (tenant[0]?.industry) {
+              const blueprints = await import("../../shared/blueprints.json").then(m => m.default);
+              const blueprint = blueprints.find((b: any) => b.industry === tenant[0].industry);
+              if (blueprint?.systemPrompt) {
+                systemPrompt = blueprint.systemPrompt;
+                logger.info('[AI Router] Smart-Prompting applied', { industry: tenant[0].industry });
+              }
+            }
+          }
           
           // Construire le prompt avec l'historique
           let prompt = input.message;

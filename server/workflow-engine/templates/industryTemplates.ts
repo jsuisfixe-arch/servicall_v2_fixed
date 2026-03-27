@@ -245,6 +245,187 @@ export const BLUEPRINT_SERVICES: WorkflowTemplate = {
   ],
 };
 
+// ─── RECRUTEMENT — ENTRETIEN TÉLÉPHONIQUE IA ─────────────────────────────────
+/**
+ * BLUEPRINT_AI_PHONE_INTERVIEW
+ * Pipeline complet : appel entrant candidat → entretien IA → scoring → création fiche → notification recruteur
+ *
+ * Ce template connecte le module RecruitmentAIService au pipeline vocal RealtimeVoicePipeline.
+ * L'IA mène l'entretien, extrait les données clés, score le candidat et notifie le recruteur.
+ */
+export const BLUEPRINT_AI_PHONE_INTERVIEW: WorkflowTemplate = {
+  industry: 'recruitment',
+  name: "Recrutement - Entretien Téléphonique IA",
+  description: "L'IA mène un entretien téléphonique de présélection, score le candidat et notifie le recruteur.",
+  trigger_type: 'call.received',
+  steps: [
+    {
+      id: 'step1',
+      name: "Réception Appel Candidat",
+      action_type: 'receive_call',
+      config: { metadata: { context: 'recruitment_interview' } },
+      order: 1,
+    },
+    {
+      id: 'step2',
+      name: "Accueil & Identification",
+      action_type: 'speak_to_caller',
+      config: {
+        text: "Bonjour et bienvenue. Je suis l'assistant de recrutement. Je vais vous poser quelques questions pour évaluer votre candidature. Pouvez-vous me dire votre nom et le poste pour lequel vous postulez ?",
+      },
+      order: 2,
+    },
+    {
+      id: 'step3',
+      name: "Collecte Informations Candidat",
+      action_type: 'listen_and_understand',
+      config: {
+        extract: ['candidate_name', 'job_position', 'years_experience'],
+        prompt: "Extrais le nom du candidat, le poste visé et les années d'expérience depuis la réponse.",
+      },
+      order: 3,
+    },
+    {
+      id: 'step4',
+      name: "Question Expérience",
+      action_type: 'speak_to_caller',
+      config: {
+        text: "Merci {{variables.candidate_name}}. Pouvez-vous me parler de votre expérience professionnelle la plus significative en lien avec ce poste ?",
+      },
+      order: 4,
+    },
+    {
+      id: 'step5',
+      name: "Écoute Expérience",
+      action_type: 'listen_and_understand',
+      config: {
+        extract: ['key_experience', 'skills', 'achievements'],
+        prompt: "Extrais les compétences clés, les réalisations et l'expérience pertinente.",
+      },
+      order: 5,
+    },
+    {
+      id: 'step6',
+      name: "Question Motivation",
+      action_type: 'speak_to_caller',
+      config: {
+        text: "Quelles sont vos motivations pour rejoindre notre entreprise et pourquoi pensez-vous être le bon candidat ?",
+      },
+      order: 6,
+    },
+    {
+      id: 'step7',
+      name: "Écoute Motivation",
+      action_type: 'listen_and_understand',
+      config: {
+        extract: ['motivations', 'salary_expectation', 'availability'],
+        prompt: "Extrais les motivations, les prétentions salariales et la disponibilité.",
+      },
+      order: 7,
+    },
+    {
+      id: 'step8',
+      name: "Scoring IA du Candidat",
+      action_type: 'ai_score',
+      config: {
+        criteria: ['experience_match', 'skills_relevance', 'communication_quality', 'motivation_level'],
+        weights: { experience_match: 0.35, skills_relevance: 0.30, communication_quality: 0.20, motivation_level: 0.15 },
+        output_field: 'candidate_score',
+      },
+      order: 8,
+    },
+    {
+      id: 'step9',
+      name: "Branchement Score",
+      action_type: 'logic_if_else',
+      config: {
+        condition: 'variables.candidate_score >= 70',
+        on_true: 'step10_qualified',
+        on_false: 'step10_rejected',
+      },
+      order: 9,
+    },
+    {
+      id: 'step10_qualified',
+      name: "Message Candidat Qualifié",
+      action_type: 'speak_to_caller',
+      config: {
+        text: "Merci {{variables.candidate_name}} pour cet échange très intéressant. Votre profil retient notre attention. Vous recevrez un email de confirmation pour la prochaine étape. À très bientôt !",
+      },
+      order: 10,
+    },
+    {
+      id: 'step10_rejected',
+      name: "Message Candidat Non Retenu",
+      action_type: 'speak_to_caller',
+      config: {
+        text: "Merci {{variables.candidate_name}} pour votre candidature. Votre profil sera examiné attentivement et nous vous contacterons par email. Bonne continuation !",
+      },
+      order: 10,
+    },
+    {
+      id: 'step11',
+      name: "Création Fiche Candidat CRM",
+      action_type: 'create_lead',
+      config: {
+        pipeline: 'recruitment',
+        status: '{{variables.candidate_score >= 70 ? "qualified" : "rejected"}}',
+        tags: ['ai_interview', '{{variables.job_position}}'],
+        custom_fields: {
+          score: '{{variables.candidate_score}}',
+          experience: '{{variables.key_experience}}',
+          skills: '{{variables.skills}}',
+          motivations: '{{variables.motivations}}',
+          availability: '{{variables.availability}}',
+        },
+      },
+      order: 11,
+    },
+    {
+      id: 'step12',
+      name: "Résumé IA de l'Entretien",
+      action_type: 'ai_summary',
+      config: {
+        type: 'recruitment_interview',
+        format: 'structured',
+        output_field: 'interview_summary',
+      },
+      order: 12,
+    },
+    {
+      id: 'step13',
+      name: "Enregistrement Appel",
+      action_type: 'record_call',
+      config: {},
+      order: 13,
+    },
+    {
+      id: 'step14',
+      name: "Notification Recruteur",
+      action_type: 'notify_agent',
+      config: {
+        channel: 'email',
+        subject: "Nouveau candidat entretien IA — {{variables.candidate_name}} (Score: {{variables.candidate_score}}/100)",
+        message: "Candidat : {{variables.candidate_name}}\nPoste : {{variables.job_position}}\nScore : {{variables.candidate_score}}/100\nExpérience : {{variables.key_experience}}\nRésumé : {{variables.interview_summary}}",
+        priority: '{{variables.candidate_score >= 70 ? "high" : "normal"}}',
+      },
+      order: 14,
+    },
+    {
+      id: 'step15',
+      name: "Planification Entretien RH (si qualifié)",
+      action_type: 'create_appointment',
+      config: {
+        type: 'hr_interview',
+        notify_email: true,
+        condition: 'variables.candidate_score >= 70',
+        title: "Entretien RH — {{variables.candidate_name}}",
+      },
+      order: 15,
+    },
+  ],
+};
+
 // ─── REGISTRE COMPLET ─────────────────────────────────────────────────────────
 export const ALL_TEMPLATES: WorkflowTemplate[] = [
   BLUEPRINT_LAWYER,
@@ -255,6 +436,7 @@ export const ALL_TEMPLATES: WorkflowTemplate[] = [
   BLUEPRINT_RESTAURANT,
   BLUEPRINT_REAL_ESTATE,
   BLUEPRINT_RECRUITMENT,
+  BLUEPRINT_AI_PHONE_INTERVIEW,
   BLUEPRINT_COMMERCE,
   BLUEPRINT_LOGISTIQUE,
   BLUEPRINT_PROSPECTION,

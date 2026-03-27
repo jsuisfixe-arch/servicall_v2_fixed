@@ -59,7 +59,12 @@ export class RecruitmentAIService {
       );
 
       const analysisText = (response.choices?.[0]?.message?.content as string) || "{}";
-      const analysis = JSON.parse(analysisText);
+      let analysis: Record<string, unknown> = {};
+      try {
+        analysis = JSON.parse(analysisText);
+      } catch {
+        logger.warn("[Recruitment AI] CV analysis response was not valid JSON, using defaults", { candidateId });
+      }
 
       const cvAnalysis: CVAnalysis = {
         candidateId,
@@ -99,7 +104,12 @@ export class RecruitmentAIService {
       );
 
       const questionText = (response.choices?.[0]?.message?.content as string) || "{}";
-      const questionData = JSON.parse(questionText);
+      let questionData: Record<string, unknown> = {};
+      try {
+        questionData = JSON.parse(questionText);
+      } catch {
+        logger.warn("[Recruitment AI] Interview question response was not valid JSON, using defaults", { candidateId });
+      }
 
       const simulation: InterviewSimulation = {
         candidateId,
@@ -141,7 +151,12 @@ export class RecruitmentAIService {
       );
 
       const evaluationText = (response.choices?.[0]?.message?.content as string) || "{}";
-      const evaluation = JSON.parse(evaluationText);
+      let evaluation: Record<string, unknown> = {};
+      try {
+        evaluation = JSON.parse(evaluationText);
+      } catch {
+        logger.warn("[Recruitment AI] Evaluation response was not valid JSON, using defaults", { candidateId });
+      }
 
       return {
         score: evaluation.score ?? 50,

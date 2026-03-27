@@ -37,7 +37,17 @@ export class WorkflowExecutor {
     const dbSteps: WorkflowStep[] = (
       Array.isArray(workflow.actions)
         ? workflow.actions
-        : JSON.parse((workflow.actions as string) || '[]')
+        : (() => {
+            try {
+              return JSON.parse((workflow.actions as string) || '[]');
+            } catch (parseErr) {
+              this.logger.error('Failed to parse workflow.actions JSON — defaulting to empty steps', {
+                workflowId: workflow.id,
+                error: parseErr,
+              });
+              return [];
+            }
+          })()
     ) as WorkflowStep[];
 
     this.logger.info('Starting workflow execution', {
@@ -168,9 +178,8 @@ export class WorkflowExecutor {
    * Handle off-topic questions by answering and returning to the main flow.
    */
   private async handleOffTopic(context: FinalExecutionContext, currentStep: WorkflowStep): Promise<void> {
-    this.logger.info("Handling off-topic question", { workflowId: context.workflow.id, tenantId: context.tenant?.id, currentStep: currentStep.name, userQuestion: userQuestion });
-    
     const userQuestion = context.event.metadata?.['user_input'] || "";
+    this.logger.info("Handling off-topic question", { workflowId: context.workflow.id, tenantId: context.tenant?.id, currentStep: currentStep.name, userQuestion });
     
     const response = await invokeLLM(context.tenant.id, {
       model: 'gpt-4o-mini',
@@ -193,7 +202,7 @@ export class WorkflowExecutor {
     context: FinalExecutionContext,
     config: ActionConfig,
     retryConfig: RetryConfig,
-    _stepName: string
+    stepName: string
   ): Promise<ActionResult<unknown>> {
     let lastError = '';
     const maxAttempts = retryConfig.maxAttempts ?? 1;

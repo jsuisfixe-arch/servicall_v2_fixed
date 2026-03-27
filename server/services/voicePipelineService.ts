@@ -9,7 +9,6 @@ import { detectSimpleIntent } from './intentClassifier';
 import { getFillerByDuration } from './fillerService';
 import * as fs from "fs";
 import * as path from "path";
-// import { processAgentActions, ToolCall } from './agentActionService'; // reserved for future tool call handling
 
 // ============================================================
 // ✅ CORRECTION CRITIQUE — Logging des timeouts vocaux
@@ -36,17 +35,99 @@ function logVoiceTimeout(callId: string, context?: Record<string, unknown>): voi
   }
 }
 
-/**
- * Voice Pipeline Service - Optimized for Latency (< 500ms)
- * Implements Pure Streaming ASR, First Token TTS, and Intelligent Barge-in.
- * ✅ CORRECTION: withTimeout sur tous les appels LLM pour éviter les blocages tRPC
- */
+// ============================================================
+// ✅ NOUVEAU — Charge le systemPrompt depuis la DB (ai_roles)
+//    Prend le premier rôle actif du tenant, sinon prompt par défaut.
+// ============================================================
+async function loadSystemPromptForTenant(tenantId: number): Promise<string> {
+  const DEFAULT_PROMPT = `Tu es un assistant vocal intelligent pour Servicall CRM.
+Ton rôle est d'aider les clients de manière courtoise et efficace.
+Réponds toujours en français. Sois concis et précis.
+
+RÈGLES IMPORTANTES :
+- Si tu ne disposes pas de l'information demandée, dis-le clairement et propose un transfert vers un conseiller ou un rappel.
+- Si l'appelant demande à parler à un humain, réponds : "Je vous comprends, je vais vous mettre en relation avec un conseiller."
+- Ne fais jamais de promesses sur des prix ou des délais sans validation.
+- Reste toujours courtois même face à un appelant mécontent.`;
+
+  try {
+    const { getDb } = await import("../db");
+    const { aiRoles } = await import("../../drizzle/schema-ai");
+    const { eq, and } = await import("drizzle-orm");
+
+    const db = await getDb();
+    if (!db) return DEFAULT_PROMPT;
+
+    const roles = await db
+      .select()
+      .from(aiRoles)
+      .where(and(eq(aiRoles.tenantId, tenantId), eq(aiRoles.isActive, true)))
+      .limit(1);
+
+    if (roles.length > 0 && roles[0].prompt) {
+      logger.info("[VoicePipeline] Loaded system prompt from DB", {
+        tenantId,
+        roleId: roles[0].id,
+        roleName: roles[0].name,
+      });
+      return roles[0].prompt;
+    }
+
+    logger.info("[VoicePipeline] No active AI role found, using default prompt", { tenantId });
+    return DEFAULT_PROMPT;
+  } catch (err) {
+    logger.warn("[VoicePipeline] Failed to load system prompt from DB, using default", { err });
+    return DEFAULT_PROMPT;
+  }
+}
+
+// ============================================================
+// ✅ NOUVEAU — Détecte si l'IA doit déclencher un transfert
+//    Retourne le type de déclencheur ou null si pas de transfert
+// ============================================================
+type TransferTrigger = "no_info" | "caller_request" | "sentiment_low" | null;
+
+function detectTransferTrigger(
+  userText: string,
+  aiResponse: string
+): TransferTrigger {
+  const userLower = userText.toLowerCase();
+  const aiLower = aiResponse.toLowerCase();
+
+  // L'appelant demande explicitement un humain
+  const humanRequestPatterns = [
+    "parler à un humain", "parler à quelqu'un", "un conseiller",
+    "un agent", "un opérateur", "je veux parler à", "transférez-moi",
+    "mettez-moi en relation", "appelez quelqu'un", "vraie personne",
+    "pas un robot", "pas une ia", "un vrai", "responsable",
+  ];
+  if (humanRequestPatterns.some((p) => userLower.includes(p))) {
+    return "caller_request";
+  }
+
+  // L'IA signale qu'elle n'a pas l'info (patterns générés par le LLM)
+  const noInfoPatterns = [
+    "je ne dispose pas", "je n'ai pas cette information",
+    "je ne peux pas répondre", "cette information n'est pas disponible",
+    "je vous recommande de contacter", "je vais vous transférer",
+    "je ne suis pas en mesure", "cette question dépasse",
+    "pour cette demande spécifique", "je n'ai pas accès",
+  ];
+  if (noInfoPatterns.some((p) => aiLower.includes(p))) {
+    return "no_info";
+  }
+
+  return null;
+}
 
 export interface PipelineConfig {
   callId: string;
   streamSid: string;
   callSid: string;
   tenantId?: number;
+  prospectPhone?: string;
+  prospectName?: string;
+  prospectId?: number;
   systemPrompt?: string;
   asrProvider?: 'openai' | 'deepgram' | 'assemblyai';
   llmModel?: string;
@@ -64,14 +145,17 @@ export class VoicePipelineService extends EventEmitter {
   private ws: WebSocket;
   private lastBargeInTime: number = 0;
   private isSpeaking: boolean = false;
+  // ✅ NOUVEAU — Suivi du contexte de transfert
+  private transferTriggered: boolean = false;
+  private conversationTranscript: string[] = [];
 
   constructor(ws: WebSocket, config: PipelineConfig) {
     super();
     this.ws = ws;
     this.config = {
-      systemPrompt: `Tu es un assistant vocal intelligent pour Servicall CRM. 
-      Ton rôle est d'aider les clients de manière courtoise et efficace.
-      Réponds toujours en français. Sois concis.`,
+      // Prompt par défaut — sera remplacé par loadSystemPromptForTenant()
+      systemPrompt: `Tu es un assistant vocal intelligent pour Servicall CRM.
+Réponds toujours en français. Sois concis.`,
       asrProvider: 'deepgram',
       llmModel: AI_MODEL.DEFAULT,
       ttsVoice: 'alloy',
@@ -96,33 +180,27 @@ export class VoicePipelineService extends EventEmitter {
       this.handleBargeIn(data.text);
     });
 
+    // Le systemPrompt sera injecté dans start() après chargement DB
     this.conversationHistory = [
-      { role: 'system', content: this.config.systemPrompt },
+      { role: 'system', content: this.config.systemPrompt! },
     ];
   }
 
   /**
    * Intelligent Barge-in Handler
-   * Filters out background noise and only interrupts if actual speech is detected.
    */
   private handleBargeIn(text: string): void {
     const now = Date.now();
-    // Ignore if last barge-in was too recent (debounce)
     if (now - this.lastBargeInTime < 500) return;
-
-    // Simple heuristic: if text is too short, it might be noise
     if (text.trim().length < 3) return;
 
     if (this.isSpeaking) {
-      logger.info('[Voice Pipeline] Intelligent Barge-in detected', { 
-        callId: this.config.callId, 
-        text 
+      logger.info('[Voice Pipeline] Intelligent Barge-in detected', {
+        callId: this.config.callId,
+        text
       });
-      
       this.lastBargeInTime = now;
       this.isSpeaking = false;
-
-      // Send clear event to Twilio to stop current audio playback
       this.ws.send(JSON.stringify({
         event: 'clear',
         streamSid: this.config.streamSid,
@@ -130,7 +208,24 @@ export class VoicePipelineService extends EventEmitter {
     }
   }
 
+  /**
+   * ✅ NOUVEAU — start() charge le systemPrompt depuis la DB avant de démarrer
+   */
   async start(): Promise<void> {
+    // 1. Charger le systemPrompt depuis la DB (rôle IA configuré dans l'interface)
+    if (this.config.tenantId) {
+      const dbPrompt = await loadSystemPromptForTenant(this.config.tenantId);
+      // Si un prompt était déjà passé en config, on le préfixe au prompt DB
+      const finalPrompt = this.config.systemPrompt
+        ? `${dbPrompt}\n\n${this.config.systemPrompt}`
+        : dbPrompt;
+
+      this.config.systemPrompt = finalPrompt;
+      // Mettre à jour l'historique de conversation avec le bon prompt
+      this.conversationHistory = [{ role: 'system', content: finalPrompt }];
+    }
+
+    // 2. Message d'accueil
     const greeting = "Bonjour, je suis l'assistant intelligent de Servicall. Comment puis-je vous aider ?";
     await this.sendAIResponse(greeting);
   }
@@ -141,40 +236,63 @@ export class VoicePipelineService extends EventEmitter {
 
   private async handleTranscription(result: TranscriptionResult): Promise<void> {
     if (!result.isFinal || result.text.trim().length === 0) return;
-
     if (this.isProcessing) return;
+
+    // Bloquer tout nouveau traitement si transfert déjà déclenché
+    if (this.transferTriggered) return;
+
     this.isProcessing = true;
 
     try {
+      // Enregistrer dans le transcript
+      this.conversationTranscript.push(`Appelant: ${result.text}`);
       this.conversationHistory.push({ role: 'user', content: result.text });
 
       // 1. Quick NLU
       const simpleIntent = detectSimpleIntent(result.text);
       if (simpleIntent) {
-        // Handle simple intents...
+        // Handle simple intents — pass through to LLM anyway for context
       }
 
-      // 2. LLM Call with Filler — envoi immédiat d'un filler pour réduire la latence perçue
-      const filler = getFillerByDuration(1500); // Assume 1.5s latency for LLM
+      // 2. Filler immédiat pour réduire la latence perçue
+      const filler = getFillerByDuration(1500);
       if (filler) {
-        await this.sendAIResponse(filler, true); // Send filler as a quick response
+        await this.sendAIResponse(filler, true);
       }
 
-      // ✅ CORRECTION: processLLM protégé par withTimeout (5s max)
+      // 3. LLM avec timeout
       const llmResponse = await this.processLLM();
-      
+      const responseText = typeof llmResponse.content === 'string'
+        ? llmResponse.content
+        : LLM_TIMEOUT_FALLBACK;
+
+      // Enregistrer la réponse IA dans le transcript
+      this.conversationTranscript.push(`Assistant: ${responseText}`);
+
+      // 4. ✅ NOUVEAU — Détecter si transfert nécessaire
+      if (!this.transferTriggered) {
+        const trigger = detectTransferTrigger(result.text, responseText);
+        if (trigger) {
+          this.transferTriggered = true;
+          // Envoyer la réponse IA d'abord (annonce du transfert)
+          await this.sendAIResponse(responseText);
+          // Déclencher le transfert intelligent
+          await this.triggerSmartTransfer(trigger);
+          return;
+        }
+      }
+
       if (llmResponse.tool_calls) {
         await this.handleToolCalls(llmResponse);
       } else {
-        await this.sendAIResponse(llmResponse.content);
+        await this.sendAIResponse(responseText);
       }
 
     } catch (error: any) {
-      logger.error('[Voice Pipeline] Error processing transcription', { 
+      logger.error('[Voice Pipeline] Error processing transcription', {
         error,
         callId: this.config.callId,
       });
-      // ✅ Fallback vocal en cas d'erreur non récupérée
       await this.sendAIResponse(LLM_TIMEOUT_FALLBACK);
     } finally {
       this.isProcessing = false;
@@ -182,8 +300,61 @@ export class VoicePipelineService extends EventEmitter {
   }
 
   /**
+   * ✅ NOUVEAU — Déclenche le transfert intelligent via SmartTransferService
+   * Émet un événement 'transfer_required' que le WebSocket handler intercepte
+   * pour envoyer un nouveau TwiML à Twilio.
+   */
+  private async triggerSmartTransfer(trigger: "no_info" | "caller_request" | "sentiment_low"): Promise<void> {
+    const summary = this.conversationTranscript.slice(-10).join("\n");
+
+    logger.info("[VoicePipeline] Smart transfer triggered", {
+      callId: this.config.callId,
+      trigger,
+      tenantId: this.config.tenantId,
+    });
+
+    try {
+      const { resolveTransfer } = await import("./smartTransferService");
+      const decision = await resolveTransfer({
+        tenantId: this.config.tenantId ?? 0,
+        callSid: this.config.callSid,
+        prospectPhone: this.config.prospectPhone ?? "",
+        prospectName: this.config.prospectName,
+        prospectId: this.config.prospectId,
+        trigger,
+        conversationSummary: summary,
+        preferredCallbackDelayMinutes: 60,
+      });
+
+      // Émettre l'événement pour que le WS handler mette à jour le TwiML Twilio
+      this.emit('transfer_required', { decision, trigger, summary });
+
+      if (decision.action === "transfer_human") {
+        logger.info("[VoicePipeline] Transferring to human agent", {
+          agentPhone: decision.agentPhone,
+        });
+      } else if (decision.action === "schedule_callback") {
+        // Message de confirmation du rappel
+        const delay = Math.round(
+          (decision.scheduledAt.getTime() - Date.now()) / 60000
+        );
+        const callbackMsg =
+          `Pas de problème. Aucun conseiller n'est disponible en ce moment. ` +
+          `Nous allons vous rappeler dans environ ${delay} minutes. ` +
+          `Votre demande a bien été enregistrée. Merci et bonne journée.`;
+        await this.sendAIResponse(callbackMsg);
+      }
+    } catch (err) {
+      logger.error("[VoicePipeline] Smart transfer failed", { err });
+      await this.sendAIResponse(
+        "Je suis désolé, je rencontre une difficulté technique. " +
+        "Veuillez nous rappeler ou consulter notre site web. Bonne journée."
+      );
+    }
+  }
+
+  /**
    * ✅ CORRECTION CRITIQUE — processLLM avec withTimeout (5 000 ms)
-   * Évite les blocages du pipeline vocal lors de latences OpenAI
    */
   private async processLLM(): Promise<any> {
     try {
@@ -193,7 +364,7 @@ export class VoicePipelineService extends EventEmitter {
           messages: this.conversationHistory as any,
           temperature: 0.7,
         }),
-        5000 // ✅ Timeout 5s maximum
+        5000
       );
       return (response as any).choices[0]?.message;
     } catch (err: any) {
@@ -205,10 +376,6 @@ export class VoicePipelineService extends EventEmitter {
           tenantId: this.config.tenantId,
           model: this.config.llmModel,
         });
-        logger.warn('[Voice Pipeline] LLM timeout — using fallback response', {
-          callId: this.config.callId,
-        });
-        // ✅ Retourner le message de fallback IA
         return { role: 'assistant', content: LLM_TIMEOUT_FALLBACK };
       }
       throw err;
@@ -217,22 +384,27 @@ export class VoicePipelineService extends EventEmitter {
 
   private async sendAIResponse(text: string, isFiller: boolean = false): Promise<void> {
     if (!text) return;
-    
     this.isSpeaking = true;
-    this.conversationHistory.push({ role: 'assistant', content: text });
-
-    // Use streaming TTS for lower latency
+    if (!isFiller) {
+      this.conversationHistory.push({ role: 'assistant', content: text });
+    }
     await synthesizeSpeech(text, this.config.ttsVoice as any, {
       streamSid: this.config.streamSid,
     }, this.ws);
-    
     if (!isFiller) {
       this.isSpeaking = false;
     }
   }
 
   private async handleToolCalls(_llmResponse: any): Promise<void> {
-    // Implementation for tool calls...
+    // Implementation for tool calls — reserved for future blueprint actions
+  }
+
+  /**
+   * Retourne le résumé de la conversation pour les rappels / analyses.
+   */
+  getConversationSummary(): string {
+    return this.conversationTranscript.join("\n");
   }
 
   async stop(): Promise<void> {

@@ -17,6 +17,7 @@ import { AuditService } from "../../../services/auditService";
 const ChangeStatusConfigSchema = z.object({
   prospect_id: z.number().optional(),
   status: z.string().min(1, "Le statut est obligatoire"),
+  output_vars: z.record(z.string()).optional(), // ex: { "previous_status": "oldStatus" }
 });
 type ChangeStatusConfig = z.infer<typeof ChangeStatusConfigSchema>;
 
@@ -116,6 +117,19 @@ export class ChangeStatusAction implements ActionHandler<ChangeStatusConfig, Fin
       // Mise à jour du contexte structuré
       if (context.variables.prospect) {
         context.variables.prospect.status = targetStatus;
+      }
+
+      // ✅ FIX [11] — output_vars : mapper les résultats dans context.variables
+      if (config.output_vars) {
+        const resultData: Record<string, string> = {
+          oldStatus: currentStatus,
+          newStatus: targetStatus,
+        };
+        for (const [contextKey, resultKey] of Object.entries(config.output_vars)) {
+          if (resultKey in resultData) {
+            context.variables[contextKey] = resultData[resultKey];
+          }
+        }
       }
 
       return {

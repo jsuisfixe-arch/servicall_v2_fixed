@@ -4,6 +4,7 @@ import { adminProcedure, tenantProcedure } from "../procedures";
 import {
   forceHumanAgent,
   forceAIAgent,
+  forceBothMode,
   getAgentType,
   getAgentSwitchHistory,
   getTenantAgentSwitchHistory,
@@ -95,6 +96,47 @@ export const agentSwitchRouter = router({
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "Failed to switch to AI agent",
+        });
+      }
+    }),
+
+  /**
+   * ✅ FIX — Active le mode BOTH : agent humain + copilot IA simultané
+   */
+  forceBoth: adminProcedure
+    .input(
+      z.object({
+        userId: z.number(),
+        reason: z.string().optional(),
+        callId: z.number().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      try {
+        await forceBothMode(
+          input.userId,
+          ctx.tenantId,
+          ctx.user.id,
+          input.reason,
+          input.callId
+        );
+
+        logger.info("[AgentSwitchRouter] Forced BOTH mode (human + AI copilot)", {
+          userId: input.userId,
+          triggeredBy: ctx.user.id,
+          tenantId: ctx.tenantId,
+        });
+
+        return {
+          success: true,
+          message: "Agent switched to BOTH (human + AI copilot) successfully",
+        };
+      } catch (error: any) {
+        if (error instanceof TRPCError) throw error;
+        logger.error("[AgentSwitchRouter] Failed to force BOTH mode", { error });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to switch to BOTH mode",
         });
       }
     }),

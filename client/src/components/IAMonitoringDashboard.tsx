@@ -14,6 +14,7 @@ import {
   Cell
 } from 'recharts';
 import { Brain, Zap, MessageCircle, TrendingUp, AlertCircle } from 'lucide-react';
+import { AIInsightsReport } from "./AIInsightsReport";
 
 const data = [
   { name: 'Lun', calls: 45, score: 82 },
@@ -40,6 +41,10 @@ export const IAMonitoringDashboard: React.FC = () => {
         <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
           Système Opérationnel
         </Badge>
+      </div>
+
+      <div className="mb-8">
+        <AIInsightsReport />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

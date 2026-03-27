@@ -89,6 +89,12 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow(),
   isActive: boolean("is_active").default(true),
   assignedAgentType: varchar("assigned_agent_type", { length: 10 }).default("AI"),
+  // Configuration rappels : numéro de téléphone personnel de l'agent pour les rappels
+  callbackPhone: varchar("callback_phone", { length: 50 }),
+  // 'crm' | 'phone' | 'both'  — canal de notification pour les rappels entrants
+  callbackNotifyMode: varchar("callback_notify_mode", { length: 20 }).default("crm"),
+  // Disponibilité agent (true = disponible pour transfert humain)
+  isAvailableForTransfer: boolean("is_available_for_transfer").default(true),
 }, (table) => ({
   emailIdx: index("email_idx").on(table.email),
   openIdIdx: uniqueIndex("open_id_idx").on(table.openId),

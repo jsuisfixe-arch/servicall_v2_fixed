@@ -45,6 +45,11 @@ export const authRouter = router({
 
   logout: publicProcedure.mutation(async ({ ctx }) => {
     if (ctx.res && ctx.req) {
+      // ✅ CORRECTION: Révocation du JWT dans Redis avant suppression du cookie
+      const sessionCookie = ctx.req.cookies?.[COOKIE_NAME] || ctx.req.signedCookies?.[COOKIE_NAME];
+      if (sessionCookie) {
+        await sdk.revokeToken(sessionCookie);
+      }
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, cookieOptions);
     }

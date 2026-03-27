@@ -7,9 +7,15 @@ import { eq } from "drizzle-orm";
  * Service de gestion de la bascule entre Agent IA et Agent Humain
  */
 
+// ✅ FIX — Type AgentMode étendu avec "BOTH" (mode copilot IA + agent humain simultané)
+// AI   : L'IA répond seule à l'appel (pipeline vocal IA)
+// HUMAN: Un agent humain répond (transfert Twilio vers numéro humain)
+// BOTH : L'agent humain répond ET l'IA lui envoie des suggestions en temps réel (copilot)
+export type AgentMode = "AI" | "HUMAN" | "BOTH";
+
 export interface SwitchAgentParams {
   userId: number;
-  newAgentType: "AI" | "HUMAN";
+  newAgentType: AgentMode;
   tenantId: number;
   callId?: number;
   reason?: string;
@@ -18,7 +24,7 @@ export interface SwitchAgentParams {
 }
 
 /**
- * Bascule un utilisateur vers un type d'agent (IA ou Humain)
+ * Bascule un utilisateur vers un type d'agent (IA, Humain, ou les deux)
  */
 export async function switchAgentType(params: SwitchAgentParams): Promise<void> {
   const db = await getDb();
@@ -27,11 +33,9 @@ export async function switchAgentType(params: SwitchAgentParams): Promise<void> 
   }
 
   try {
-    // PostgreSQL uniquement
     const usersTable = users;
     const historyTable = agentSwitchHistory;
 
-    // Récupérer l'état actuel de l'utilisateur
     const userResult = await db
       .select()
       .from(usersTable)
@@ -43,9 +47,8 @@ export async function switchAgentType(params: SwitchAgentParams): Promise<void> 
     }
 
     const currentUser = userResult[0];
-    const previousAgentType = currentUser.assignedAgentType as "AI" | "HUMAN" | null;
+    const previousAgentType = currentUser.assignedAgentType as AgentMode | null;
 
-    // Si l'agent est déjà du type demandé, ne rien faire
     if (previousAgentType === params.newAgentType) {
       logger.info("[AgentSwitch] Agent type already set", {
         userId: params.userId,
@@ -54,13 +57,11 @@ export async function switchAgentType(params: SwitchAgentParams): Promise<void> 
       return;
     }
 
-    // Mettre à jour le type d'agent
     await db
       .update(usersTable)
       .set({ assignedAgentType: params.newAgentType })
       .where(eq(usersTable.id, params.userId));
 
-    // Enregistrer l'historique
     await db.insert(historyTable).values({
       userId: params.userId,
       callId: params.callId,
@@ -132,9 +133,32 @@ export async function forceAIAgent(
 }
 
 /**
+ * ✅ FIX — Active le mode BOTH : agent humain + copilot IA simultané
+ * L'agent humain gère l'appel, l'IA analyse en temps réel et envoie
+ * des suggestions via WebSocket (RealtimeAgentCoachingService).
+ */
+export async function forceBothMode(
+  userId: number,
+  tenantId: number,
+  triggeredByUserId?: number,
+  reason?: string,
+  callId?: number
+): Promise<void> {
+  return switchAgentType({
+    userId,
+    newAgentType: "BOTH",
+    tenantId,
+    callId,
+    reason: reason || "Hybrid mode: human agent + AI copilot",
+    triggeredBy: triggeredByUserId ? "admin" : "system",
+    triggeredByUserId,
+  });
+}
+
+/**
  * Récupère le type d'agent actuel d'un utilisateur
  */
-export async function getAgentType(userId: number): Promise<"AI" | "HUMAN" | null> {
+export async function getAgentType(userId: number): Promise<AgentMode | null> {
   const db = await getDb();
   if (!db) {
     throw new Error("Database not available");
@@ -153,7 +177,9 @@ export async function getAgentType(userId: number): Promise<"AI" | "HUMAN" | nul
       return null;
     }
 
-    return ((userResult[0].assignedAgentType as string)?.toUpperCase() as "AI" | "HUMAN") || "AI";
+    const raw = (userResult[0].assignedAgentType as string)?.toUpperCase();
+    if (raw === "AI" || raw === "HUMAN" || raw === "BOTH") return raw;
+    return "AI";
   } catch (error: any) {
     logger.error("[AgentSwitch] Failed to get agent type", { error, userId });
     throw error;

@@ -20,12 +20,13 @@ import { logger } from "../../infrastructure/logger";
 import { getContactMemory, saveInteractionMemory } from "../aiMemoryService";
 import { buildSystemPrompt } from "./aiPromptEngine";
 import { decryptToken } from "../../routers/socialRouter";
+import { createLinkedInService, createTwitterService } from "./linkedin-twitter-service";
 
 // ─────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────
 
-export type AutoReplyPlatform = "messenger" | "instagram_dm" | "instagram_comment" | "tiktok_comment";
+export type AutoReplyPlatform = "messenger" | "instagram_dm" | "instagram_comment" | "tiktok_comment" | "linkedin_comment" | "twitter_mention";
 
 export interface IncomingPlatformMessage {
   platform: AutoReplyPlatform;
@@ -278,6 +279,42 @@ export async function handleAutoReply(
         }
         break;
       }
+
+      // ✅ CORRECTION: LinkedIn commentaires (câblé)
+      case "linkedin_comment": {
+        const linkedInService = createLinkedInService();
+        if (message.commentId) {
+          const result = await linkedInService.replyToComment(message.commentId, aiReply);
+          replied = result.success;
+          simulated = result.simulated ?? false;
+          if (!result.success) {
+            logger.warn("[AutoReply] LinkedIn comment reply failed", { tenantId, error: result.error });
+          }
+        } else {
+          logger.warn("[AutoReply] No commentId for LinkedIn reply — simulating", { tenantId });
+          simulated = true;
+          replied = true;
+        }
+        break;
+      }
+
+      // ✅ CORRECTION: Twitter/X mentions (câblé)
+      case "twitter_mention": {
+        const twitterService = createTwitterService();
+        if (message.messageId) {
+          const result = await twitterService.replyToMention(message.messageId, aiReply);
+          replied = result.success;
+          simulated = result.simulated ?? false;
+          if (!result.success) {
+            logger.warn("[AutoReply] Twitter mention reply failed", { tenantId, error: result.error });
+          }
+        } else {
+          logger.warn("[AutoReply] No messageId for Twitter reply — simulating", { tenantId });
+          simulated = true;
+          replied = true;
+        }
+        break;
+      }
     }
 
     // Sauvegarder en mémoire (non-bloquant)
@@ -285,7 +322,7 @@ export async function handleAutoReply(
       tenantId,
       contactIdentifier: message.senderId,
       contactName: message.senderName,
-      channel: "whatsapp", // réutiliser le canal générique
+      channel: message.platform, // ✅ CORRECTION: canal réel au lieu de "whatsapp" hardcodé
       manualSummary: `[${message.platform}] "${message.text.slice(0, 80)}" → "${aiReply.slice(0, 80)}"`,
       keyFacts: { platform: message.platform, autoReplied: true } as Record<string, unknown>,
     }).catch((err) => logger.warn("[AutoReply] Memory save failed", { err }));

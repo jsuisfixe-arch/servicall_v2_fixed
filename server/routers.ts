@@ -66,6 +66,7 @@ import { roiRouter }               from "./routers/roiRouter";
 import { contactRouter }           from "./routers/contactRouter";
 import { socialRouter }            from "./routers/socialRouter";
 import { servicallV3Router }       from "./routers/servicallV3Router";
+import { callbackRouter }          from "./routers/callbackRouter";
 
 // ═══════════════════════════════════════════════════════════════════════
 // ROUTERS OPTIONNELS (nouveaux dans version CORRIGÉE)
@@ -215,6 +216,7 @@ export const appRouter = router({
   health:            healthRouter,
   contact:           contactRouter,
   social:            socialRouter,
+  callbacks:         callbackRouter,
 
   // ── Nouvelles fonctionnalités (OPTIONNELLES) ─────────────────────────
   byok:     byokRouter,

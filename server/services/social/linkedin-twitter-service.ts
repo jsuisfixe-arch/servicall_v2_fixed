@@ -111,6 +111,40 @@ export class LinkedInService {
       return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
     }
   }
+
+  /**
+   * Répond à un commentaire LinkedIn via l'API v2
+   */
+  async replyToComment(commentUrn: string, message: string): Promise<SocialPostResult> {
+    if (!this.configured) {
+      logger.warn("[LinkedInService] Not configured — simulating comment reply", { commentUrn });
+      return { success: true, simulated: true };
+    }
+    try {
+      const response = await fetch(`${this.baseUrl}/socialActions/${encodeURIComponent(commentUrn)}/comments`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.config.accessToken}`,
+          "LinkedIn-Version": "202304",
+        },
+        body: JSON.stringify({
+          actor: `urn:li:organization:${this.config.organizationId}`,
+          message: { text: message.slice(0, 1250) },
+        }),
+      });
+      if (!response.ok) {
+        const err = await response.text();
+        logger.warn("[LinkedInService] Comment reply failed", { status: response.status, err });
+        return { success: false, error: err };
+      }
+      const location = response.headers.get("x-restli-id") ?? "";
+      logger.info("[LinkedInService] Comment reply sent", { commentUrn });
+      return { success: true, postId: location };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    }
+  }
 }
 
 export class TwitterService {
@@ -175,6 +209,39 @@ export class TwitterService {
         postId: tweetId,
         postUrl: `https://twitter.com/servicall/status/${tweetId}`
       };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    }
+  }
+
+  /**
+   * Répond à une mention Twitter/X via l'API v2
+   */
+  async replyToMention(tweetId: string, message: string): Promise<SocialPostResult> {
+    if (!this.configured) {
+      logger.warn("[TwitterService] Not configured — simulating mention reply", { tweetId });
+      return { success: true, simulated: true };
+    }
+    try {
+      const response = await fetch(`${this.baseUrl}/tweets`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.config.bearerToken}`,
+        },
+        body: JSON.stringify({
+          text: message.slice(0, 280),
+          reply: { in_reply_to_tweet_id: tweetId },
+        }),
+      });
+      if (!response.ok) {
+        const err = await response.text();
+        logger.warn("[TwitterService] Reply failed", { status: response.status, err });
+        return { success: false, error: err };
+      }
+      const data = (await response.json()) as { data?: { id?: string } };
+      const replyId = data?.data?.id ?? "";
+      return { success: true, postId: replyId };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
     }

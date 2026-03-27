@@ -3,15 +3,58 @@ import { ForbiddenError } from "@shared/_core/errors";
 import type { Request } from "express";
 import { SignJWT, jwtVerify } from "jose";
 import { AuthService, AuthenticatedUser } from "../services/authService";
+import { getRedisClient } from "../infrastructure/redis/redis.client";
+import { logger } from "../infrastructure/logger";
 
 /**
  * SDK Server - Gestion locale des sessions SECURISEE
+ *
+ * CORRECTION CRITIQUE:
+ * - Les tokens JWT ne sont PAS révoqués à la création (login).
+ * - La révocation se fait UNIQUEMENT au logout via revokeToken().
+ * - Le store Redis (avec fallback mémoire) remplace la variable `db` non définie.
  */
 
 export type SessionPayload = {
   openId: string;
   name: string;
 };
+
+// Fallback en mémoire si Redis n'est pas disponible
+const memoryRevokedTokens = new Map<string, number>();
+
+const REVOKED_TOKEN_PREFIX = "revoked_jwt:";
+
+async function addRevokedTokenToStore(jti: string, expiresAtSeconds: number): Promise<void> {
+  try {
+    const redis = getRedisClient();
+    const ttl = expiresAtSeconds - Math.floor(Date.now() / 1000);
+    if (ttl > 0) {
+      await redis.set(`${REVOKED_TOKEN_PREFIX}${jti}`, "1", "EX", ttl);
+    }
+  } catch (err) {
+    logger.warn("[SDK] Redis unavailable for token revocation, using memory fallback", { jti });
+    memoryRevokedTokens.set(jti, expiresAtSeconds);
+  }
+}
+
+async function isTokenRevokedInStore(jti: string | undefined): Promise<boolean> {
+  if (!jti) return false;
+  try {
+    const redis = getRedisClient();
+    const val = await redis.get(`${REVOKED_TOKEN_PREFIX}${jti}`);
+    return val !== null;
+  } catch (err) {
+    // Fallback mémoire
+    const exp = memoryRevokedTokens.get(jti);
+    if (exp === undefined) return false;
+    if (exp < Math.floor(Date.now() / 1000)) {
+      memoryRevokedTokens.delete(jti);
+      return false;
+    }
+    return true;
+  }
+}
 
 class SDKServer {
   private getSessionSecret() {
@@ -31,8 +74,10 @@ class SDKServer {
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
 
-    const jti = crypto.randomUUID(); // Protection contre le replay
-    await db.addRevokedToken(jti, expirationSeconds);
+    const jti = crypto.randomUUID();
+
+    // ✅ CORRECTION: Le token N'EST PAS révoqué ici.
+    // Il est ajouté au store Redis UNIQUEMENT lors du logout via revokeToken().
 
     return await new SignJWT({ openId, name: options.name ?? "" })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -42,21 +87,43 @@ class SDKServer {
       .sign(secretKey);
   }
 
+  /**
+   * Révoque un token JWT (à appeler lors du logout).
+   * Stocke le jti dans Redis avec TTL = durée restante du token.
+   */
+  async revokeToken(token: string): Promise<void> {
+    try {
+      const secretKey = this.getSessionSecret();
+      const { payload } = await jwtVerify(token, secretKey, {
+        algorithms: ["HS256"],
+      });
+      const jti = payload.jti as string;
+      const exp = payload.exp as number;
+      if (jti && exp) {
+        await addRevokedTokenToStore(jti, exp);
+        logger.info("[SDK] Token révoqué au logout", { jti });
+      }
+    } catch (err) {
+      // Token déjà expiré ou invalide → pas besoin de révoquer
+      logger.debug("[SDK] revokeToken: token invalide ou déjà expiré, révocation ignorée");
+    }
+  }
+
   async verifySession(token: string | undefined | null): Promise<SessionPayload | null> {
     if (!token) return null;
 
     try {
       const secretKey = this.getSessionSecret();
-      const { payload, protectedHeader } = await jwtVerify(token, secretKey, {
+      const { payload } = await jwtVerify(token, secretKey, {
         algorithms: ["HS256"],
       });
 
-      // Check if the token is revoked
-      const isRevoked = await db.isTokenRevoked(payload.jti as string);
+      // Vérifie si le token a été révoqué (logout explicite)
+      const isRevoked = await isTokenRevokedInStore(payload.jti as string);
       if (isRevoked) {
         return null;
       }
-      
+
       const { openId, name } = payload as Record<string, unknown>;
       if (!openId || typeof openId !== "string") return null;
 

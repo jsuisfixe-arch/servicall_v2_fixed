@@ -15,17 +15,15 @@ export const blueprintMarketplaceRouter = router({
       offset: z.number().default(0),
     }))
     .query(async ({ input }) => {
-      const whereClause = eq(workflows.isPublic, true);
-      // Note: On pourrait ajouter un filtre par catégorie si la colonne existe
+      // ✅ FIX BUG #3: Utiliser blueprints.json au lieu de la DB
+      const blueprints = await import("../../shared/blueprints.json").then(m => m.default);
+      let filtered = blueprints;
       
-      const results = await db.select()
-        .from(workflows)
-        .where(whereClause)
-        .limit(input.limit)
-        .offset(input.offset)
-        .orderBy(desc(workflows.createdAt));
+      if (input.category) {
+        filtered = blueprints.filter((b: any) => b.industry === input.category);
+      }
 
-      return results;
+      return filtered.slice(input.offset, input.offset + input.limit);
     }),
 
   /**
@@ -33,29 +31,28 @@ export const blueprintMarketplaceRouter = router({
    */
   importBlueprint: tenantProcedure
     .input(z.object({
-      blueprintId: z.number(),
+      blueprintId: z.string(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const blueprint = await db.query.workflows.findFirst({
-        where: and(eq(workflows.id, input.blueprintId), eq(workflows.isPublic, true)),
-      });
+      // ✅ FIX BUG #3: Utiliser blueprints.json au lieu de la DB
+      const blueprints = await import("../../shared/blueprints.json").then(m => m.default);
+      const blueprint = blueprints.find((b: any) => b.id === input.blueprintId);
 
       if (!blueprint) {
         throw new TRPCError({
           code: "NOT_FOUND",
-          message: "Blueprint non trouvé ou non public",
+          message: "Blueprint non trouvé dans la bibliothèque",
         });
       }
 
-      // Créer une copie pour le tenant actuel
-      const [newWorkflow] = await db.insert(workflows).values({
+      const { createWorkflow } = await import("../db");
+      const newWorkflow = await createWorkflow({
+        tenantId: ctx.tenantId,
         name: `${blueprint.name} (Importé)`,
         description: blueprint.description,
-        definition: blueprint.definition,
-        tenantId: ctx.tenantId,
-        isPublic: false,
-        isActive: false,
-      }).returning();
+        triggerType: "event",
+        actions: blueprint.actions,
+      });
 
       return newWorkflow;
     }),

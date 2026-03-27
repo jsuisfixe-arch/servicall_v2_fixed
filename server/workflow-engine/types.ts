@@ -156,6 +156,9 @@ export interface EventMetadata {
   webhook_tenant_id?: string | number;
   tenant_id?: string | number;
   trigger?: string;
+  // ✅ FIX — agentType propagé depuis LiveCallTriggerService et lu par scoreWorkflow
+  agentType?: "AI" | "HUMAN" | "BOTH";
+  userId?: number;
   [key: string]: any;
 }
 
@@ -178,6 +181,9 @@ export interface TriggerConfig {
   sourcePattern?: string;
   trigger?: string;
   conditions?: any;
+  // ✅ FIX — Filtre optionnel par mode agent : un workflow peut cibler AI, HUMAN ou BOTH
+  // Si non défini, le workflow s'applique à tous les modes.
+  agentType?: "AI" | "HUMAN" | "BOTH";
 }
 
 // 9. Résultat d'une exécution de workflow

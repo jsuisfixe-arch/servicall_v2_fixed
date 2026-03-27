@@ -64,7 +64,7 @@ interface WorkflowStep {
   order: number;
 }
 
-type GetWorkflowByIdOutput = RouterOutputs["workflow"]["getById"];
+type GetWorkflowByIdOutput = RouterOutputs["workflowBuilder"]["getById"];
 type CreateWorkflowInput = RouterInputs["workflow"]["create"];
 
 interface WorkflowData {
@@ -97,7 +97,8 @@ export function WorkflowBuilder({ tenantId, workflowId, onSave }: WorkflowBuilde
   const industryId = configData?.data?.industryId;
 
   // Charger le workflow si en mode édition
-  const { data: workflowData, isLoading: isLoadingWorkflow } = trpc.workflow.getById.useQuery(
+  // ✅ FIX A1 — utilise trpc.workflowBuilder.getById (le router dédié au builder)
+  const { data: workflowData, isLoading: isLoadingWorkflow } = trpc.workflowBuilder.getById.useQuery(
     { workflowId: workflowId! },
     { 
       enabled: !!workflowId,
@@ -118,7 +119,8 @@ export function WorkflowBuilder({ tenantId, workflowId, onSave }: WorkflowBuilde
   }, [workflow]);
 
   // Mutation pour créer/mettre à jour
-  const upsertMutation = trpc.workflow.create.useMutation({
+  // ✅ FIX BUG #4: Utiliser trpc.workflowBuilder.save au lieu de trpc.workflow.create
+  const upsertMutation = trpc.workflowBuilder.save.useMutation({
     onSuccess: () => {
       toast.success("Workflow enregistré !");
       utils.workflow.list.invalidate();
@@ -152,13 +154,18 @@ export function WorkflowBuilder({ tenantId, workflowId, onSave }: WorkflowBuilde
       return;
     }
     setIsSaving(true);
+
+    // ✅ FIX BUG #4: Mapper les triggers frontend vers l'enum backend (manual, scheduled, event)
+    // Les valeurs comme 'call_completed' sont des événements.
+    const backendTrigger = (trigger === 'manual' || trigger === 'scheduled') ? trigger : 'event';
+
     upsertMutation.mutate({
-      tenantId,
+      workflowId: workflowId ? parseInt(workflowId.toString()) : undefined,
       name,
       description,
-      triggerType: trigger,
+      triggerType: backendTrigger as "manual" | "scheduled" | "event",
       actions: steps,
-          });
+    });
   };
 
   const getDefaultConfig = (type: string) => {

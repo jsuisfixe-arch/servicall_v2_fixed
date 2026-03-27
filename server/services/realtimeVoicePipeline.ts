@@ -33,6 +33,7 @@ import { DialogueEngineService } from "./DialogueEngineService";
 import type { DialogueOutput } from "./DialogueEngineService";
 import { RealtimeAgentCoachingService } from "./realtimeAgentCoachingService";
 import { DialogueScenario } from "../../shared/types/dialogue";
+import { DialogueScenarioRepository } from "./DialogueScenarioRepository";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface VoicePipelineConfig {
@@ -76,6 +77,7 @@ export class RealtimeVoicePipeline {
   private conversationKey: string;
   private dialogueEngineService: DialogueEngineService;
   private realtimeAgentCoachingService: RealtimeAgentCoachingService | undefined;
+  private cachedScenario: DialogueScenario | null = null; // ✅ scénario chargé depuis DB
 
   constructor(ws: WebSocket, config: VoicePipelineConfig) {
     this.ws = ws;
@@ -119,20 +121,20 @@ export class RealtimeVoicePipeline {
       throw new Error("Missing scenarioId or prospectId");
     }
 
-    // TODO: Charger le scénario depuis la base de données ou les blueprints
-    // Pour l\'instant, utilisons un blueprint générique ou un mock
-    const scenario: DialogueScenario = {
-      id: this.config.scenarioId,
-      name: "Default Scenario",
-      industry: "universal_industry_scenarios",
-      initialState: "start",
-      fallbackState: "fallback",
-      context: { systemPrompt: this.config.systemPrompt },
-      states: [
-        { id: "start", name: "start", onEnter: [{ type: "speak_to_caller", config: { text: "Bonjour, comment puis-je vous aider ?" } }], transitions: [] },
-        { id: "fallback", name: "fallback", onEnter: [{ type: "speak_to_caller", config: { text: "Je n'ai pas compris. Pouvez-vous répéter ?" } }], transitions: [] },
-      ],
-    };
+    // ✅ CORRECTION: Chargement du scénario depuis la DB (workflows) ou templates industrie
+    // Priorité : Redis cache → DB workflows → templates → générique
+    const scenario: DialogueScenario = await DialogueScenarioRepository.findById(
+      this.config.scenarioId,
+      this.config.tenantId,
+      this.config.systemPrompt
+    );
+    this.cachedScenario = scenario; // stocké pour handleUserTurn
+    logger.info("[VoicePipeline] Scenario loaded", {
+      callSid: this.config.callSid,
+      scenarioId: scenario.id,
+      scenarioName: scenario.name,
+      statesCount: scenario.states.length,
+    });
 
     await this.dialogueEngineService.initializeConversation(
       this.config.callSid,
@@ -284,6 +286,13 @@ export class RealtimeVoicePipeline {
     let dialogueOutput: DialogueOutput;
 
     try {
+      // ✅ CORRECTION: utilise le scénario chargé depuis la DB au démarrage du pipeline
+      const scenario = this.cachedScenario ?? await DialogueScenarioRepository.findById(
+        this.config.scenarioId!,
+        this.config.tenantId,
+        this.config.systemPrompt
+      );
+
       dialogueOutput = await this.dialogueEngineService.processInput(
         this.config.callSid,
         {
@@ -292,19 +301,7 @@ export class RealtimeVoicePipeline {
           prospectId: this.config.prospectId!,
           callId: String(this.config.callId),
         },
-        // TODO: Charger le scénario réel ici, pour l'instant on utilise un mock
-        {
-          id: this.config.scenarioId!,
-          name: "Default Scenario",
-          industry: "universal_industry_scenarios",
-          initialState: "start",
-          fallbackState: "fallback",
-          context: { systemPrompt: this.config.systemPrompt },
-          states: [
-            { id: "start", name: "start", onEnter: [{ type: "speak_to_caller", config: { text: "Bonjour, comment puis-je vous aider ?" } }], transitions: [] },
-            { id: "fallback", name: "fallback", onEnter: [{ type: "speak_to_caller", config: { text: "Je n'ai pas compris. Pouvez-vous répéter ?" } }], transitions: [] },
-          ],
-        }
+        scenario
       );
 
       const aiResponse = dialogueOutput.response;

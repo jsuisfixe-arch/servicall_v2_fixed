@@ -9,7 +9,7 @@ import { logger } from "../infrastructure/logger";
 import { TRPCError } from "@trpc/server";
 import { normalizeResponse, normalizeDbRecords, normalizeDbRecord } from "../_core/responseNormalizer";
 import { paginationInput, paginate } from "../_core/pagination";
-import { count, eq, desc } from "drizzle-orm";
+import { count, eq, desc, and } from "drizzle-orm";
 import { workflows } from "../../drizzle/schema";
 import { 
   workflowSchema, 
@@ -238,5 +238,102 @@ export const workflowRouter = router({
           message: "Failed to get workflow execution history",
         });
       }
+    }),
+
+  /**
+   * Importe un blueprint (depuis blueprints.json) pour le tenant actuel
+   * ✅ FIX BUG #1: importBlueprint procedure added
+   */
+  importBlueprint: managerProcedure
+    .input(z.object({
+      blueprintId: z.string(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const blueprints = await import("../../shared/blueprints.json").then(m => m.default);
+        const blueprint = blueprints.find((b: any) => b.id === input.blueprintId);
+
+        if (!blueprint) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `Blueprint ${input.blueprintId} non trouvé dans la bibliothèque`,
+          });
+        }
+
+        const { createWorkflow } = await import("../db");
+        const workflow = await createWorkflow({
+          tenantId: ctx.tenantId,
+          name: blueprint.name,
+          description: blueprint.description,
+          triggerType: "event", // Par défaut pour les blueprints métier
+          actions: blueprint.actions,
+        });
+
+        logger.info("[WorkflowRouter] Blueprint importé", { 
+          blueprintId: input.blueprintId, 
+          workflowId: workflow.id,
+          tenantId: ctx.tenantId 
+        });
+
+        return normalizeDbRecord(workflow);
+      } catch (error: any) {
+        logger.error("[WorkflowRouter] Import failed", { error, blueprintId: input.blueprintId });
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Erreur lors de l'import du blueprint",
+        });
+      }
+    }),
+
+  /**
+   * ✅ FIX A3 — Importe tous les blueprints recommandés pour un métier en une seule mutation.
+   * Remplace les N appels parallèles côté client par un seul appel atomique côté serveur.
+   * Les imports réussis sont retournés ; les échecs partiels sont loggés mais ne bloquent pas.
+   */
+  importBlueprintsForIndustry: managerProcedure
+    .input(z.object({
+      industryId: z.string().min(1),
+      blueprintIds: z.array(z.string()).min(1),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const blueprints = await import("../../shared/blueprints.json").then(m => m.default);
+      const { createWorkflow } = await import("../db");
+
+      const results: { blueprintId: string; workflowId?: number; error?: string }[] = [];
+
+      for (const blueprintId of input.blueprintIds) {
+        try {
+          const blueprint = (blueprints as any[]).find((b) => b.id === blueprintId);
+          if (!blueprint) {
+            results.push({ blueprintId, error: `Blueprint ${blueprintId} introuvable` });
+            continue;
+          }
+
+          const workflow = await createWorkflow({
+            tenantId: ctx.tenantId,
+            name: blueprint.name,
+            description: blueprint.description,
+            triggerType: "event",
+            actions: blueprint.actions,
+          });
+
+          logger.info("[WorkflowRouter] Blueprint importé via importBlueprintsForIndustry", {
+            blueprintId,
+            workflowId: workflow.id,
+            tenantId: ctx.tenantId,
+          });
+
+          results.push({ blueprintId, workflowId: workflow.id });
+        } catch (err: any) {
+          logger.error("[WorkflowRouter] Partial import failure", { blueprintId, error: err });
+          results.push({ blueprintId, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
+      const imported = results.filter(r => !r.error).length;
+      const failed   = results.filter(r => !!r.error).length;
+
+      return { results, imported, failed };
     }),
 });

@@ -78,7 +78,8 @@ interface PerformanceMetrics {
   areasForImprovement: string[];
 }
 
-class AgentCoachingService {
+// ✅ FIX — Classe exportée pour import direct dans twilioService (coaching post-appel automatique)
+export class AgentCoachingService {
   /**
    * Analyse un appel et génère un feedback personnalisé
    */

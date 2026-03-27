@@ -145,14 +145,15 @@ export async function handleIncomingCall(params: {
       .where(eq(prospects.phone, from))
       .limit(1);
 
-    let agentType: "AI" | "HUMAN" = "AI";
+    // ✅ FIX — agentType supporte maintenant AI | HUMAN | BOTH
+    let agentType: "AI" | "HUMAN" | "BOTH" = "AI";
     let userId: number | undefined;
     let tenantId: number | null = null;
 
     if (prospectResults.length > 0) {
       const prospect = prospectResults[0];
       tenantId = prospect.tenantId;
-      
+
       if (prospect.assignedTo) {
         const userResults = await db
           .select()
@@ -162,8 +163,8 @@ export async function handleIncomingCall(params: {
 
         if (userResults.length > 0) {
           const user = userResults[0];
-          // @ts-ignore
-          agentType = ((user as any).assignedAgentType as "AI" | "HUMAN") || "AI";
+          const raw = ((user as any).assignedAgentType as string)?.toUpperCase();
+          agentType = (raw === "AI" || raw === "HUMAN" || raw === "BOTH") ? raw : "AI";
           userId = user.id;
         }
       }
@@ -204,16 +205,74 @@ export async function handleIncomingCall(params: {
       },
     });
 
+    // ─── Helper : crée un token éphémère WebSocket et le stocke ─────────────
+    const STREAM_TOKEN_TTL_MS = 5 * 60 * 1000;
+    const { voiceStreamTokens } = await import("../index");
+
+    const createStreamToken = (agentId?: number, mode: "AI" | "HUMAN" | "BOTH" = "AI") => {
+      const token = `vst_${(crypto as any).randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+      voiceStreamTokens.set(token, {
+        tenantId: tenantId!,
+        callSid,
+        callId: callRecord?.id ?? 0,
+        expiresAt: Date.now() + STREAM_TOKEN_TTL_MS,
+        agentId,
+        agentMode: mode,
+      });
+      setTimeout(() => voiceStreamTokens.delete(token), STREAM_TOKEN_TTL_MS);
+      return token;
+    };
+
+    const webhookBase = (process.env["WEBHOOK_URL"] || "https://api.servicall.local").replace(/\/$/, "");
+    const wsHost = new URL(webhookBase).host;
+
     if (agentType === "AI") {
-      twiml.say({ voice: "alice", language: "fr-FR" }, "Bienvenue. Je suis votre assistant intelligent. Comment puis-je vous aider ?");
-      const webhookBase = process.env["WEBHOOK_URL"] || "https://api.servicall.local";
+      // ─── Mode IA seule ───────────────────────────────────────────────────
+      // Pipeline vocal IA complet : ASR → LLM → TTS, tout via WebSocket Twilio
+      const streamToken = createStreamToken(undefined, "AI");
+
+      twiml.say(
+        { voice: "alice", language: "fr-FR" },
+        "Bienvenue. Je suis votre assistant intelligent. Comment puis-je vous aider ?"
+      );
       const connect = twiml.connect();
       connect.stream({
-        url: `wss://${new URL(webhookBase).host}/voice-ai`,
+        url: `wss://${wsHost}/voice-stream?token=${streamToken}&callSid=${encodeURIComponent(callSid)}&tenantId=${tenantId}`,
         name: "VoiceAIStream",
       });
+
+    } else if (agentType === "BOTH") {
+      // ─── Mode BOTH : humain répond + copilot IA écoute en parallèle ──────
+      // L'appel est transféré à l'agent humain (numéro de téléphone).
+      // En parallèle, un <Stream> bidirectionnel envoie l'audio au pipeline
+      // RealtimeAgentCoachingService qui génère des suggestions temps réel
+      // affichées dans l'interface de l'agent (via WebSocket séparé).
+      const streamToken = createStreamToken(userId, "BOTH");
+
+      twiml.say(
+        { voice: "alice", language: "fr-FR" },
+        "Bienvenue. Je vous mets en relation avec votre conseiller."
+      );
+
+      // Fork : <Dial> vers l'agent humain ET <Stream> vers le copilot IA
+      // Le <Stream> en mode "inbound" écoute l'audio sans interrompre l'appel.
+      const connect = twiml.connect();
+      connect.stream({
+        url: `wss://${wsHost}/voice-stream?token=${streamToken}&callSid=${encodeURIComponent(callSid)}&tenantId=${tenantId}&mode=copilot`,
+        name: "CopilotStream",
+      });
+
+      twiml.dial(
+        { callerId: phoneNumber },
+        userId ? undefined : phoneNumber // destination : agent humain ou numéro par défaut
+      );
+
     } else {
-      twiml.say({ voice: "alice", language: "fr-FR" }, "Bienvenue. Je vous mets en relation avec un agent. Veuillez patienter.");
+      // ─── Mode HUMAN seul ─────────────────────────────────────────────────
+      twiml.say(
+        { voice: "alice", language: "fr-FR" },
+        "Bienvenue. Je vous mets en relation avec un agent. Veuillez patienter."
+      );
       twiml.dial(phoneNumber);
     }
 
@@ -383,13 +442,39 @@ export async function handleCallStatusUpdate(params: {
         from,
         to,
         direction: call.direction || "outbound",
-        prospect: null, // Prospect non requis pour l'événement de fin
+        prospect: null,
         metadata: {
           status,
           duration,
           recordingUrl,
+          agentType: (call as any).agentType ?? undefined,
         },
       });
+
+      // ✅ FIX — Coaching post-appel : déclenché automatiquement à chaque fin d'appel
+      // AVANT : agentCoachingService.analyzeCallAndGenerateFeedback() n'était jamais appelé
+      //         depuis le webhook — il fallait l'appeler manuellement depuis le router.
+      // APRÈS : déclenché ici, fire-and-forget, pour tout appel avec un agentId connu.
+      if (call.agentId && call.tenantId && status === "completed") {
+        void (async () => {
+          try {
+            const { AgentCoachingService } = await import("./agentCoachingService");
+            const coachingService = new AgentCoachingService();
+            await coachingService.analyzeCallAndGenerateFeedback(call.id, call.tenantId!);
+            logger.info("[Coaching] Post-call analysis completed", {
+              callId: call.id,
+              agentId: call.agentId,
+              tenantId: call.tenantId,
+            });
+          } catch (coachingErr) {
+            // Ne jamais faire crasher le webhook à cause du coaching
+            logger.warn("[Coaching] Post-call analysis failed (non-blocking)", {
+              callId: call.id,
+              coachingErr,
+            });
+          }
+        })();
+      }
     }
 
   } catch (error: any) {
@@ -442,12 +527,94 @@ export async function endCall(callSid: string): Promise<void> {
   );
 }
 
-export async function transferCall(callSid: string, to: string): Promise<void> {
+/**
+ * ✅ FIX — transferCall avec transmission du contexte de conversation IA → Humain
+ *
+ * AVANT : transfert Twilio brut, l'agent humain repart de zéro.
+ * APRÈS :
+ *   1. Lit l'historique de conversation Redis (conversation:${callSid})
+ *   2. Génère un résumé IA de l'échange en cours
+ *   3. Stocke ce résumé dans Redis (transfer_context:${callSid}, TTL 10 min)
+ *   4. Effectue le transfert Twilio via <Dial>
+ *
+ * L'interface agent humain peut lire transfer_context:${callSid} via
+ * GET /api/calls/:callSid/transfer-context pour afficher le résumé.
+ */
+export async function transferCall(
+  callSid: string,
+  to: string,
+  tenantId?: number
+): Promise<void> {
   return ResilienceService.execute(
     async () => {
       const client = getTwilioClient();
       if (!client) throw new Error("Twilio client not initialized");
-      await (client as any).calls(callSid).update({ twiml: `<Response><Dial>${to}</Dial></Response>` });
+
+      // ─── 1. Récupérer l'historique de conversation depuis Redis ──────────
+      let contextSummary: string | null = null;
+      try {
+        const { getRedisClient } = await import("../infrastructure/redis/redis.client");
+        const redis = getRedisClient();
+        if (redis) {
+          const raw = await redis.get(`conversation:${callSid}`);
+          if (raw) {
+            const history: Array<{ role: string; content: string }> = JSON.parse(raw);
+            const recentTurns = history.slice(-10); // 5 derniers échanges max
+
+            if (recentTurns.length > 0) {
+              // ─── 2. Générer un résumé IA de la conversation ────────────
+              const { invokeLLM } = await import("../_core/llm");
+              const summaryResult = await invokeLLM(tenantId ?? 0, {
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      "Tu es un assistant qui résume des conversations téléphoniques pour les agents humains. " +
+                      "Génère un résumé concis (3-5 lignes) : raison de l'appel, informations clés collectées, " +
+                      "ton du client, actions déjà effectuées, points d'attention.",
+                  },
+                  {
+                    role: "user",
+                    content:
+                      `Résume cette conversation pour l'agent humain qui prend le relais :\n\n` +
+                      recentTurns
+                        .map((m) => `${m.role === "user" ? "Client" : "IA"}: ${m.content}`)
+                        .join("\n"),
+                  },
+                ],
+                maxTokens: 300,
+              });
+
+              contextSummary =
+                (summaryResult.choices[0]?.message?.content as string) || null;
+
+              // ─── 3. Stocker le contexte dans Redis (TTL 10 min) ─────────
+              await redis.setex(
+                `transfer_context:${callSid}`,
+                600,
+                JSON.stringify({
+                  callSid,
+                  transferredAt: new Date().toISOString(),
+                  summary: contextSummary,
+                  rawHistory: recentTurns,
+                })
+              );
+
+              logger.info("[Twilio] Transfer context saved", { callSid, contextLength: recentTurns.length });
+            }
+          }
+        }
+      } catch (contextErr) {
+        // Ne jamais bloquer le transfert à cause d'une erreur de contexte
+        logger.warn("[Twilio] Could not build transfer context", { callSid, contextErr });
+      }
+
+      // ─── 4. Effectuer le transfert Twilio ────────────────────────────────
+      await (client as any).calls(callSid).update({
+        twiml: `<Response><Dial>${to}</Dial></Response>`,
+      });
+
+      logger.info("[Twilio] Call transferred", { callSid, to, hasContext: !!contextSummary });
     },
     { name: "TWILIO_TRANSFER_CALL", module: "TWILIO" }
   );

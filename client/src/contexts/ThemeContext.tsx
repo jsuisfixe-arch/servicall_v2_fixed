@@ -2,12 +2,25 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 
 type Theme = "light" | "dark";
 
+interface BrandingConfig {
+  appName: string;
+  logoUrl?: string;
+  primaryColor: string;
+}
+
 interface ThemeContextType {
   theme: Theme;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
   switchable: boolean;
+  branding: BrandingConfig;
+  updateBranding: (config: Partial<BrandingConfig>) => void;
 }
+
+const defaultBranding: BrandingConfig = {
+  appName: "Servicall",
+  primaryColor: "#3b82f6", // Default blue-600
+};
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
@@ -30,6 +43,11 @@ export function ThemeProvider({
     return defaultTheme;
   });
 
+  const [branding, setBranding] = useState<BrandingConfig>(() => {
+    const stored = localStorage.getItem("branding");
+    return stored ? JSON.parse(stored) : defaultBranding;
+  });
+
   useEffect(() => {
     const root = document.documentElement;
     if (theme === "dark") {
@@ -42,6 +60,17 @@ export function ThemeProvider({
     }
   }, [theme, switchable]);
 
+  useEffect(() => {
+    // Appliquer la couleur primaire aux variables CSS de Tailwind
+    const root = document.documentElement;
+    root.style.setProperty('--primary', branding.primaryColor);
+    // On pourrait aussi générer des variantes (hover, etc.) ici
+    localStorage.setItem("branding", JSON.stringify(branding));
+    
+    // Mettre à jour le titre de la page
+    document.title = branding.appName;
+  }, [branding]);
+
   const toggleTheme = () => {
     setThemeState(prev => (prev === "light" ? "dark" : "light"));
   };
@@ -50,8 +79,19 @@ export function ThemeProvider({
     setThemeState(newTheme);
   };
 
+  const updateBranding = (config: Partial<BrandingConfig>) => {
+    setBranding(prev => ({ ...prev, ...config }));
+  };
+
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme, switchable }}>
+    <ThemeContext.Provider value={{ 
+      theme, 
+      setTheme, 
+      toggleTheme, 
+      switchable, 
+      branding, 
+      updateBranding 
+    }}>
       {children}
     </ThemeContext.Provider>
   );

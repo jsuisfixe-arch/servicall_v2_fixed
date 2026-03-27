@@ -10,6 +10,7 @@ import { useAuth } from './_core/hooks/useAuth';
 import { LoadingFallback } from './components/LoadingFallback';
 import DashboardLayout from './components/DashboardLayout';
 import { PWAManager } from '@/components/PWAManager';
+import { ServicallWidget } from './components/ServicallWidget';
 
 // ── lazyWithRetry STABLE ──────────────────────────────────────────────────────
 // ✅ FIX : Pas de window.location.reload() qui crée des boucles infinies.
@@ -129,7 +130,7 @@ const SocialMediaManager      = lazyWithRetry(() => import('./pages/SocialMediaM
 const UnifiedInbox            = lazyWithRetry(() => import('./pages/UnifiedInbox'));
 const AIRoleEditor            = lazyWithRetry(() => import('./pages/AIRoleEditor'));
 const BrandConfigPage         = lazyWithRetry(() => import('./components/BrandConfigPanel'));
-
+const AdminBranding           = lazyWithRetry(() => import('./pages/AdminBranding'));
 const Documents               = lazyWithRetry(() => import('./pages/Documents'));
 
 const InvoiceCreation         = lazyWithRetry(() => import('./pages/InvoiceCreation'));
@@ -169,6 +170,7 @@ export default function App() {
     <SuspenseErrorBoundary>
       <Suspense fallback={<LoadingFallback />}>
         <PWAManager />
+        <ServicallWidget />
         <Switch>
 
           {/* ── Public ────────────────────────────────────────────────── */}
@@ -205,6 +207,7 @@ export default function App() {
                       <Route path="/manager"               component={ManagerDashboard} />
                       <Route path="/ia-monitoring"         component={IAMonitoring} />
                       <Route path="/admin/dashboard"       component={AdminDashboard} />
+                      <Route path="/admin/branding"        component={AdminBranding} />
                       <Route path="/admin"                 component={AdminPanel} />
 
                       <Route path="/calls"                 component={Calls} />

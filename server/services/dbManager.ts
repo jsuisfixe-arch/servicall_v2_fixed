@@ -10,7 +10,6 @@ import * as schema from "../../drizzle/schema";
 import { logger } from "../infrastructure/logger";
 import { sql } from "drizzle-orm";
 
-// Type précis de l'instance Drizzle pour postgres-js + schéma complet
 type DrizzleDB = PostgresJsDatabase<typeof schema>;
 
 export class DBManager {
@@ -18,6 +17,7 @@ export class DBManager {
   private _db: DrizzleDB | null = null;
   private _client: postgres.Sql | null = null;
   private _initPromise: Promise<void> | null = null;
+  private _isInitialized = false;
 
   private constructor() {}
 
@@ -29,125 +29,141 @@ export class DBManager {
   }
 
   /**
-   * Initialise la connexion PostgreSQL de manière bloquante
+   * Initialise la connexion PostgreSQL de manière robuste
    */
   public async initialize(): Promise<void> {
-    if (this._db) return;
-    if (this._initPromise) return this._initPromise;
+    // Si déjà initialisé, retourner
+    if (this._isInitialized && this._db) {
+      logger.debug("[DBManager] Déjà initialisé, retour immédiat");
+      return;
+    }
 
-    this._initPromise = (async () => {
-      const databaseUrl = process.env['DATABASE_URL'];
-      
-      if (!databaseUrl || !databaseUrl.startsWith("postgres")) {
-        const error = "[DBManager] ❌ DATABASE_URL invalide ou manquante (PostgreSQL requis)";
-        logger.error(error);
-        throw new Error(error);
-      }
+    // Si une initialisation est en cours, attendre sa fin
+    if (this._initPromise) {
+      logger.debug("[DBManager] Initialisation en cours, attente...");
+      return this._initPromise;
+    }
 
-      try {
-        // ✅ CORRECTION BUG TIMEOUT POSTGRESQL:
-        // - Augmentation du pool max à 25 connexions
-        // - idle_timeout réduit à 10s pour libérer plus vite les connexions inutilisées
-        // - statement_timeout global à 25s (en dessous du timeout tRPC de 30s)
-        // - max_lifetime réduit à 15min pour recycler régulièrement les connexions
-        this._client = postgres(databaseUrl, {
-          max: 25,              // ✅ FIX: 25 connexions max (au lieu de 20)
-          idle_timeout: 10,     // ✅ FIX: Libérer les connexions inactives après 10s (au lieu de 20s)
-          connect_timeout: 10,  // Timeout de connexion 10s
-          max_lifetime: 60 * 15, // ✅ FIX: Recycler les connexions toutes les 15 min (au lieu de 30)
-          // ✅ FIX: Statement timeout global pour éviter les requêtes bloquées indéfiniment
-          // Doit être inférieur au timeout tRPC (30s) pour un message d'erreur propre
-          connection: {
-            statement_timeout: 25000, // 25s statement timeout
-          },
-          onnotice: () => {},
-          onparameter: (_name: string, _value: string) => {},
-          ssl: process.env['NODE_ENV'] === "production" && !databaseUrl.includes("localhost") ? "require" : false,
-        });
-
-        this._db = drizzle(this._client, { schema });
-        
-        // Test de connexion immédiat
-        await this._client`SELECT 1`.catch(_err => {
-          logger.warn("[DBManager] ⚠️ PostgreSQL non disponible au démarrage, le serveur continuera sans DB.");
-          this._db = null; // Marquer comme non disponible
-        });
-        
-        if (this._db) {
-          try {
-            await this._client`SELECT 1`;
-            logger.info("[DBManager] ✅ PostgreSQL initialisé et connexion initiale réussie");
-          } catch (error: any) {
-            logger.error("❌ Impossible de se connecter à PostgreSQL en production : " + (error instanceof Error ? error.message : String(error)));
-            if (process.env['NODE_ENV'] === "production") {
-              process.exit(1);
-            }
-            this._db = null; // seulement pour dev
-          }
-        }
-      } catch (error: any) {
-        logger.error("[DBManager] ❌ Erreur lors de la configuration PostgreSQL", error instanceof Error ? error : new Error(String(error)));
-      }
-    })();
-
+    // Créer la promesse d'initialisation
+    this._initPromise = this._performInitialization();
     return this._initPromise;
   }
 
-  public get db(): DrizzleDB {
-    const mock = {
-      select: () => ({ from: () => ({ where: () => ({ limit: () => [] }) }) }),
-      insert: () => ({ values: () => ({ returning: () => [] }) }),
-      update: () => ({ set: () => ({ where: () => ({ returning: () => [] }) }) }),
-      delete: () => ({ where: () => ({ returning: () => [] }) }),
-      execute: () => Promise.resolve([]),
-      transaction: (cb: (tx: DrizzleDB) => Promise<unknown>) => cb({} as DrizzleDB),
-    };
+  private async _performInitialization(): Promise<void> {
+    const databaseUrl = process.env["DATABASE_URL"];
 
-    // ✅ BLOC 1: DB_ENABLED mock supprimé — erreur explicite si DB non initialisée
-    if (!this._db) {
-      throw new Error('[DBManager] Base de données non initialisée. Appelez initialize() avant toute opération.');
+    if (!databaseUrl || !databaseUrl.startsWith("postgres")) {
+      const error = "[DBManager] ❌ DATABASE_URL invalide ou manquante (PostgreSQL requis)";
+      logger.error(error);
+      throw new Error(error);
+    }
+
+    try {
+      logger.info("[DBManager] Connexion à PostgreSQL...");
+
+      this._client = postgres(databaseUrl, {
+        max: 25,
+        idle_timeout: 10,
+        connect_timeout: 10,
+        max_lifetime: 60 * 15,
+        connection: {
+          statement_timeout: 25000,
+        },
+        onnotice: () => {},
+        onparameter: (_name: string, _value: string) => {},
+        ssl:
+          process.env["NODE_ENV"] === "production" &&
+          !databaseUrl.includes("localhost")
+            ? "require"
+            : false,
+      });
+
+      this._db = drizzle(this._client, { schema });
+
+      // Test de connexion immédiat
+      logger.info("[DBManager] Test de connexion...");
+      await this._client`SELECT 1`;
+
+      this._isInitialized = true;
+      logger.info("[DBManager] ✅ PostgreSQL initialisé et connexion réussie");
+    } catch (error: unknown) {
+      this._db = null;
+      this._client = null;
+      this._isInitialized = false;
+
+      const errorMsg =
+        error instanceof Error ? error.message : String(error);
+      logger.error(
+        "[DBManager] ❌ Erreur lors de l'initialisation PostgreSQL : " + errorMsg
+      );
+
+      throw error;
+    }
+  }
+
+  public get db(): DrizzleDB {
+    if (!this._db || !this._isInitialized) {
+      throw new Error(
+        "[DBManager] Base de données non initialisée. Appelez initialize() avant toute opération."
+      );
     }
     return this._db;
   }
 
   public get client() {
-    if (!this._client) {
-      throw new Error("[DBManager] ❌ Tentative d'accès au client avant initialisation.");
+    if (!this._client || !this._isInitialized) {
+      throw new Error(
+        "[DBManager] ❌ Tentative d'accès au client avant initialisation."
+      );
     }
     return this._client;
   }
 
-  public async transaction<T>(callback: (tx: Parameters<DrizzleDB["transaction"]>[0] extends (tx: infer Tx) => unknown ? Tx : never) => Promise<T>): Promise<T> {
-    if (!this._db) await this.initialize();
+  public isReady(): boolean {
+    return this._isInitialized && this._db !== null;
+  }
+
+  public async transaction<T>(
+    callback: (tx: any) => Promise<T>
+  ): Promise<T> {
+    if (!this._isInitialized) {
+      await this.initialize();
+    }
     return await this.db.transaction(callback);
   }
 
-  /**
-   * ✅ ISOLATION TENANT: Exécute une transaction avec le contexte tenant_id défini
-   * pour la Row Level Security (RLS) de PostgreSQL.
-   */
   public async withTenantContext<T>(
     tenantId: number,
-    callback: (tx: Parameters<DrizzleDB["transaction"]>[0] extends (tx: infer Tx) => unknown ? Tx : never) => Promise<T>
+    callback: (tx: any) => Promise<T>
   ): Promise<T> {
-    if (!this._db) await this.initialize();
-    
-    return await this.db.transaction(async (tx: DrizzleDB) => {
-      await tx.execute(sql`SELECT set_config('app.current_tenant_id', ${tenantId.toString()}, true)`);
-      
-      logger.debug("[DBManager] Transaction started with tenant context", { tenantId });
-      
-      return await callback(tx as any);
+    if (!this._isInitialized) {
+      await this.initialize();
+    }
+
+    return await this.db.transaction(async (tx: any) => {
+      await tx.execute(
+        sql`SELECT set_config('app.current_tenant_id', ${tenantId.toString()}, true)`
+      );
+      return await callback(tx);
     });
   }
 
   public async close() {
     if (this._client) {
-      await this._client.end();
-      this._client = null;
-      this._db = null;
-      this._initPromise = null;
-      logger.info("[DBManager] PostgreSQL connections closed");
+      try {
+        await this._client.end();
+        logger.info("[DBManager] PostgreSQL connections closed");
+      } catch (error: unknown) {
+        logger.error(
+          "[DBManager] Erreur lors de la fermeture des connexions : " +
+          (error instanceof Error ? error.message : String(error))
+        );
+      } finally {
+        this._client = null;
+        this._db = null;
+        this._isInitialized = false;
+        this._initPromise = null;
+      }
     }
   }
 }

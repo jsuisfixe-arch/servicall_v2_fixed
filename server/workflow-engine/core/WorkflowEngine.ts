@@ -5,6 +5,7 @@
 
 import { eq, and } from "drizzle-orm";
 import { getDb, workflows, tenants } from "../../db";
+import { workflowExecutions } from "../../../drizzle/schema";
 import type {
   IncomingEvent,
   Workflow,
@@ -94,12 +95,55 @@ export class WorkflowEngine {
       steps_results: {}
     };
 
+    // ✅ FIX [8] — Persistence : enregistrer l'exécution en DB avant et après
+    const startedAt = new Date();
+    let execId: number | undefined;
+    try {
+      const [execRow] = await db.insert(workflowExecutions).values({
+        workflowId: bestWorkflow.id,
+        tenantId: event.tenant_id!,
+        status: 'pending',
+        trigger: event.type ?? event.channel,
+        input: event.data as any,
+        startedAt,
+      }).returning({ id: workflowExecutions.id });
+      execId = execRow?.id;
+    } catch (persistErr) {
+      // Ne pas bloquer l'exécution si la persistence échoue
+      this.logger.error('Failed to insert workflow_execution record', { error: persistErr });
+    }
+
     // 5. Exécuter le workflow
-    return await this.executor.execute(context);
+    const result = await this.executor.execute(context);
+
+    // Mettre à jour le statut de l'exécution
+    if (execId !== undefined) {
+      try {
+        await db.update(workflowExecutions)
+          .set({
+            status: result.status === 'SUCCESS' ? 'completed' : 'failed',
+            output: result.variables as any,
+            error: result.status !== 'SUCCESS' ? JSON.stringify(result.results) : null,
+            completedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(workflowExecutions.id, execId));
+      } catch (updateErr) {
+        this.logger.error('Failed to update workflow_execution record', { error: updateErr });
+      }
+    }
+
+    return result;
   }
 
   /**
-   * Score un workflow par rapport à un événement
+   * Score un workflow par rapport à un événement.
+   * Un score > 0 signifie que le workflow est candidat.
+   * ✅ FIX [7] — agentType supporte AI, HUMAN et BOTH (copilot mode) :
+   *   - Si le workflow ne précise pas agentType → compatible avec tous les modes (+0)
+   *   - Si agentType === 'BOTH' → compatible avec tout eventAgentType, bonus +4
+   *   - Si agentType === eventAgentType → correspondance exacte, bonus +8
+   *   - Si agentType !== eventAgentType (et pas BOTH) → disqualifié (-1)
    */
   private scoreWorkflow(workflow: Workflow, event: IncomingEvent): number {
     let score = 0;
@@ -127,6 +171,16 @@ export class WorkflowEngine {
       } catch (_e) {
         this.logger.error('Invalid sourcePattern regex', { pattern: config.sourcePattern });
       }
+    }
+
+    const eventAgentType = (event.metadata as EventMetadata)?.agentType;
+    if (config?.agentType) {
+      const isBoth = config.agentType === 'BOTH';
+      const isCompatible = isBoth || !eventAgentType || config.agentType === eventAgentType;
+      if (!isCompatible) {
+        return -1;
+      }
+      score += isBoth ? 4 : 8;
     }
 
     return score;

@@ -3,6 +3,7 @@
     "id": "blueprint-1",
     "name": "Téléphonie (Base) - Appel entrant",
     "industry": "generic",
+    "systemPrompt": "Tu es un assistant de réception téléphonique professionnel. Ton but est d'accueillir le client, d'identifier son besoin et de qualifier l'urgence de sa demande.",
     "description": "Workflow pour Appel entrant dans la catégorie Téléphonie (Base).",
     "trigger": "call_received",
     "actions": [
@@ -42,6 +43,7 @@
     "id": "blueprint-2",
     "name": "Téléphonie (Base) - Appel sortant",
     "industry": "generic",
+    "systemPrompt": "Tu es un agent commercial effectuant des appels sortants. Ton ton est dynamique, persuasif mais toujours respectueux. Ton objectif est de susciter l'intérêt pour nos services.",
     "description": "Workflow pour Appel sortant dans la catégorie Téléphonie (Base).",
     "trigger": "call_completed",
     "actions": [

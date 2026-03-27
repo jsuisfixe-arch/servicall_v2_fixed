@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Brain, Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 interface AIRoleForm {
   name: string;
@@ -29,7 +30,9 @@ export default function AIRoleEditor() {
   });
   const [_isSaving, setIsSaving] = useState(false);
 
-  const tenantId = 1; // Default tenant for demo
+  // ✅ FIX — tenantId dynamique depuis la session (plus de hardcode à 1)
+  const { user } = useAuth();
+  const tenantId = (user as any)?.tenantId ?? 0;
 
   // Queries — procédures ajoutées dans aiRouter.ts
   const rolesQuery = trpc.ai.listModels.useQuery({ tenantId });

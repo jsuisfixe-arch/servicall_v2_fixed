@@ -50,10 +50,14 @@ export function IndustryWorkflowsManager({
   // Récupérer la configuration actuelle du tenant
   const { data: currentConfig } = trpc.industryConfig.getCurrentConfig.useQuery();
 
-  // Mutation pour importer les blueprints sélectionnés
-  const importBlueprintMutation = trpc.workflows.importBlueprint.useMutation({
-    onSuccess: () => {
-      toast.success("✅ Workflows activés avec succès !");
+  // ✅ FIX A3 — Mutation unique : importe tous les blueprints du métier en un appel
+  const importBlueprintsForIndustryMutation = trpc.workflow.importBlueprintsForIndustry.useMutation({
+    onSuccess: (data) => {
+      if (data.failed === 0) {
+        toast.success(`✅ ${data.imported} workflow(s) activé(s) avec succès !`);
+      } else {
+        toast.warning(`⚠️ ${data.imported} importé(s), ${data.failed} échoué(s). Vérifiez les logs.`);
+      }
       setIsImporting(false);
       setIsOpen(false);
       utils.workflow.list.invalidate();
@@ -62,6 +66,17 @@ export function IndustryWorkflowsManager({
     onError: (error) => {
       toast.error(`❌ Erreur : ${error.message}`);
       setIsImporting(false);
+    },
+  });
+
+  // Conserver l'ancienne mutation pour la compatibilité des autres composants
+  const importBlueprintMutation = trpc.workflow.importBlueprint.useMutation({
+    onSuccess: () => {
+      toast.success("✅ Workflow activé avec succès !");
+      utils.workflow.list.invalidate();
+    },
+    onError: (error) => {
+      toast.error(`❌ Erreur : ${error.message}`);
     },
   });
 
@@ -98,17 +113,15 @@ export function IndustryWorkflowsManager({
 
     setIsImporting(true);
     try {
-      // Importer tous les workflows sélectionnés en parallèle
-      await Promise.all(
-        selectedWorkflows.map((blueprintId) => {
-          const id = typeof blueprintId === 'string' ? parseInt(blueprintId) : blueprintId;
-          return importBlueprintMutation.mutateAsync({
-            blueprintId: id,
-          });
-        })
-      );
+      // ✅ FIX A3 — un seul appel serveur pour tous les blueprints sélectionnés
+      await importBlueprintsForIndustryMutation.mutateAsync({
+        industryId,
+        blueprintIds: selectedWorkflows,
+      });
     } catch (err) {
       console.error("Failed to import workflows:", err);
+    } finally {
+      setIsImporting(false);
     }
   };
 

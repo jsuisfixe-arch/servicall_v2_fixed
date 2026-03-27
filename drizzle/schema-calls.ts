@@ -150,3 +150,50 @@ export const callExecutionMetrics = pgTable("call_execution_metrics", {
 
 export type CallExecutionMetric = typeof callExecutionMetrics.$inferSelect;
 export type InsertCallExecutionMetric = typeof callExecutionMetrics.$inferInsert;
+
+// ============================================
+// SCHEDULED_CALLBACKS TABLE
+// Rappels automatiques planifiés par l'IA quand :
+//  - L'humain n'est pas disponible au moment du transfert
+//  - L'IA ne dispose pas de l'info demandée
+//  - L'appelant le demande explicitement
+// ============================================
+export const scheduledCallbacks = pgTable("scheduled_callbacks", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  // Prospect à rappeler
+  prospectPhone: varchar("prospect_phone", { length: 50 }).notNull(),
+  prospectName: varchar("prospect_name", { length: 255 }),
+  prospectId: integer("prospect_id"),
+  // Origine du rappel
+  callSid: varchar("call_sid", { length: 255 }),          // SID de l'appel source
+  callId: integer("call_id"),
+  triggerReason: varchar("trigger_reason", { length: 50 }).notNull(),
+  // 'no_info' : IA sans réponse  |  'human_unavailable' : humain absent
+  // 'caller_request' : appelant demande  |  'manual' : planifié manuellement
+  // Planification
+  scheduledAt: timestamp("scheduled_at").notNull(),        // Quand rappeler
+  notifyMode: varchar("notify_mode", { length: 20 }).notNull().default("crm"),
+  // 'crm' : notification CRM uniquement
+  // 'phone' : appel sur numéro configuré
+  // 'both' : CRM + appel
+  assignedUserId: integer("assigned_user_id").references(() => users.id, { onDelete: "set null" }),
+  // Statut
+  status: varchar("status", { length: 30 }).notNull().default("pending"),
+  // 'pending' | 'notified' | 'called' | 'completed' | 'failed' | 'cancelled'
+  callbackCallSid: varchar("callback_call_sid", { length: 255 }), // SID du rappel sortant
+  completedAt: timestamp("completed_at"),
+  // Contexte IA résumé de la conversation précédente
+  conversationSummary: text("conversation_summary"),
+  metadata: json("metadata").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => ({
+  tenantIdIdx: index("idx_callbacks_tenant_id").on(table.tenantId),
+  statusIdx: index("idx_callbacks_status").on(table.status),
+  scheduledAtIdx: index("idx_callbacks_scheduled_at").on(table.scheduledAt),
+  prospectPhoneIdx: index("idx_callbacks_prospect_phone").on(table.tenantId, table.prospectPhone),
+}));
+
+export type ScheduledCallback = typeof scheduledCallbacks.$inferSelect;
+export type InsertScheduledCallback = typeof scheduledCallbacks.$inferInsert;

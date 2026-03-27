@@ -6,6 +6,24 @@ import { AI_MODEL } from "./aiModels";
 import * as fs from "fs";
 import * as path from "path";
 
+// ─── BYOK Key Resolver ────────────────────────────────────────────────────────
+// Résout la clé OpenAI à utiliser pour un tenant donné.
+// Priorité : clé BYOK tenant (interface) > clé ENV globale (fallback demo/dev)
+async function resolveOpenAIKey(tenantId: number): Promise<string> {
+  try {
+    const { getAPIKey } = await import("../services/byokService");
+    const byokKey = await getAPIKey(tenantId, "openai");
+    if (byokKey && byokKey.startsWith("sk-")) {
+      logger.debug("[LLM] Using BYOK OpenAI key for tenant", { tenantId });
+      return byokKey;
+    }
+  } catch (err) {
+    logger.warn("[LLM] BYOK key lookup failed, falling back to ENV key", { tenantId, err });
+  }
+  // Fallback : clé globale ENV (page démo, ou tenant sans BYOK configuré)
+  return ENV.openaiApiKey ?? "";
+}
+
 // ============================================================
 // ✅ CORRECTION CRITIQUE — Timeout Manager (Promise.race)
 // Évite les blocages tRPC causés par des appels OpenAI trop longs
@@ -338,9 +356,13 @@ function validateLLMResponse(data: any): boolean {
 }
 
 export async function invokeLLM(tenantId: number, params: InvokeParams): Promise<InvokeResult> {
-  if (!ENV.openaiApiKey || ENV.openaiApiKey.startsWith('sk-') === false) {
-    logger.warn("[LLM] OPENAI_API_KEY est manquant ou invalide. Les fonctions IA seront désactivées.");
-    // Retourner un résultat de fallback immédiat
+  // ✅ FIX CRITIQUE — Résolution de la clé OpenAI : BYOK tenant > ENV global
+  // Si le tenant a configuré sa propre clé via l'interface BYOK, elle est utilisée
+  // en priorité. Sinon, fallback sur la clé ENV (démo/dev ou clé commune).
+  const resolvedApiKey = await resolveOpenAIKey(tenantId);
+
+  if (!resolvedApiKey || !resolvedApiKey.startsWith("sk-")) {
+    logger.warn("[LLM] Aucune clé OpenAI valide disponible (BYOK ni ENV).", { tenantId });
     return {
       id: "fallback-invalid-key",
       created: Math.floor(Date.now() / 1000),
@@ -358,7 +380,6 @@ export async function invokeLLM(tenantId: number, params: InvokeParams): Promise
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     } as unknown as InvokeResult;
   }
-
 
   const {
     messages,
@@ -412,7 +433,8 @@ export async function invokeLLM(tenantId: number, params: InvokeParams): Promise
             method: "POST",
             headers: {
               "content-type": "application/json",
-              authorization: `Bearer ${ENV.openaiApiKey}`,
+              // ✅ Clé résolue dynamiquement : BYOK tenant ou ENV global
+              authorization: `Bearer ${resolvedApiKey}`,
             },
             body: JSON.stringify(payload),
           });
